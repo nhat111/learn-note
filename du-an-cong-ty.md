@@ -417,6 +417,54 @@ ORDER BY index_name, column_position;
 
 **Bẫy riêng của `MERGE`:** hai session cùng `MERGE` một key **chưa có**: cả hai đều thấy "không khớp" nên cùng `INSERT`, và một bên dính `ORA-00001` (Spring báo `DuplicateKeyException`). Nếu key đó có thể được tạo đồng thời thì bắt lỗi này rồi chạy lại `MERGE` một lần (lần sau sẽ rơi vào nhánh `UPDATE`).
 
+### Khi câu `MERGE` nằm trong stored procedure dài
+
+Không cần đọc hết procedure. Oracle ghi lại từng câu SQL bên trong nó cùng **số dòng**:
+```sql
+-- Mọi câu SQL chạy từ procedure/package này, chậm nhất lên đầu
+SELECT s.sql_id,
+       s.program_line#                                          AS dong,
+       s.executions                                             AS so_lan_chay,
+       ROUND(s.elapsed_time / NULLIF(s.executions, 0) / 1e6, 3) AS avg_sec,
+       ROUND(s.elapsed_time / 1e6)                              AS tong_sec,
+       SUBSTR(s.sql_text, 1, 60)                                AS dau_cau
+FROM v$sql s
+JOIN all_objects o ON o.object_id = s.program_id
+WHERE o.object_name = 'TEN_PROCEDURE_HOAC_PACKAGE'
+ORDER BY s.elapsed_time DESC;
+
+-- Đúng lúc đang treo: procedure đang đứng ở câu nào, chờ gì, ai chặn
+SELECT sid, sql_id, event, blocking_session, last_call_et AS sec
+FROM v$session
+WHERE username = 'APP_USER' AND status = 'ACTIVE';
+```
+Đọc kết quả:
+- Mở procedure tới đúng **`dong`** của câu đứng đầu danh sách. Chỉ cần đọc đoạn đó.
+- `so_lan_chay` lớn hơn nhiều lần so với số lần gọi API: câu đó nằm **trong vòng lặp** (cursor `FOR` loop), xử lý từng dòng một.
+- Lấy `sql_id` để xem plan: `DBMS_XPLAN.DISPLAY_CURSOR('<sql_id>')`.
+
+**Lướt procedure tìm mấy thứ này** (tìm bằng Ctrl+F, không cần hiểu hết logic):
+
+| Tìm | Vì sao quan trọng |
+|---|---|
+| `COMMIT`, `ROLLBACK`, `PRAGMA AUTONOMOUS_TRANSACTION` | Procedure tự commit thì `@Transactional` của Java **không rollback được** phần đã commit. Lúc đó đặt timeout ở server có thể để lại dữ liệu nửa chừng |
+| `FOR UPDATE`, `LOCK TABLE` | Chỗ có thể đứng chờ khoá |
+| `MERGE` / `UPDATE` nằm trong `LOOP` | Xử lý từng dòng (row-by-row), chậm theo số dòng |
+| `@` (ví dụ `@DBLINK_POS`) | Gọi sang DB khác qua DB link: chậm và phụ thuộc hệ thống kia |
+| `WHEN OTHERS THEN NULL` | Lỗi bị nuốt im lặng, Java tưởng là thành công |
+| Hàm bọc cột trong `WHERE`/`ON` (`TO_CHAR(col)`, `NVL(col, ...)`, `TRUNC(col)`) | Làm mất tác dụng của index |
+
+**Gọi procedure từ MyBatis và đặt timeout:**
+```xml
+<select id="confirmCancel" statementType="CALLABLE" timeout="20">
+  { call PKG_ORDER.CONFIRM_CANCEL(
+      #{orderId, mode=IN,  jdbcType=NUMERIC},
+      #{userId,  mode=IN,  jdbcType=VARCHAR},
+      #{result,  mode=OUT, jdbcType=VARCHAR}) }
+</select>
+```
+Quá 20 giây thì JDBC huỷ lời gọi (Oracle báo `ORA-01013`), và Spring rollback phần chưa commit. Phần procedure **đã tự commit** thì vẫn giữ nguyên, nên phải kiểm bảng ở trên trước khi bật timeout.
+
 **Câu hỏi phỏng vấn có thể đi từ chuyện này:**
 - Timeout ở client có làm server dừng không? (Không. Servlet không biết client đã ngắt cho tới khi ghi response.)
 - Vì sao không chỉ tăng timeout của app lên 60 giây? (Che triệu chứng; server chậm hơn 60 giây thì lại y như cũ; người dùng phải chờ lâu; vẫn có trường hợp app báo sai.)
