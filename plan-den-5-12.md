@@ -28,6 +28,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 - [ ] Bắt đầu nhật ký PR (mẫu ở cuối file)
 
 **PV**
+- [ ] **Ưu tiên:** pitch 2 phút cho dự án công ty, điền các chỗ `___` trong [du-an-cong-ty.md](du-an-cong-ty.md)
 - [ ] Pitch 2 phút cho crypto-signal (tiếng Việt)
 - [ ] Pitch 2 phút cho korean-practice (tiếng Việt)
 - [ ] [Java/SQL](phong-van-java-sql.md): A1–A6, S1–S5
@@ -46,6 +47,8 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 - [ ] Dùng plan mode: sửa plan của AI trước khi cho viết code
 
 **PV**: viết câu chuyện theo dạng Vấn đề → Quyết định → Đo lường → Kết quả
+- [ ] Câu chuyện 0 (chính): tối ưu N+1 ở dự án công ty ([mục 3](du-an-cong-ty.md#3-câu-chuyện-n1-câu-chuyện-chính-của-bro)), có số trước và sau
+- [ ] [Dự án công ty](du-an-cong-ty.md): Q1–Q12 (xác nhận huỷ, N+1)
 - [ ] Câu chuyện 1: replay setup −0.39R, tắt alert
 - [ ] Câu chuyện 2: Binance chặn IP Render nên chuyển qua OKX
 - [ ] Câu chuyện 3: audio làm đầy 10GB của Vercel nên chuyển qua GitHub Pages + jsDelivr
@@ -118,7 +121,8 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 
 ## Câu hỏi phỏng vấn cần chuẩn bị
 
-- [ ] Giới thiệu project trong 2 phút
+- [ ] Giới thiệu **dự án công ty** trong 2 phút ([du-an-cong-ty.md](du-an-cong-ty.md))
+- [ ] Giới thiệu side project trong 2 phút
 - [ ] Vẽ kiến trúc giúp anh/chị
 - [ ] AI viết bao nhiêu? Bạn làm phần nào?
 - [ ] Làm sao biết code AI viết là đúng?
