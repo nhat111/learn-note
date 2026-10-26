@@ -30,6 +30,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 **PV**
 - [ ] Pitch 2 phút cho crypto-signal (tiếng Việt)
 - [ ] Pitch 2 phút cho korean-practice (tiếng Việt)
+- [ ] [Java/SQL](phong-van-java-sql.md): A1–A6, S1–S5
 
 ## Tuần 2 (2–8/11): Java 21 / Spring Boot 3, tự tay
 
@@ -48,6 +49,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 - [ ] Câu chuyện 1: replay setup −0.39R, tắt alert
 - [ ] Câu chuyện 2: Binance chặn IP Render nên chuyển qua OKX
 - [ ] Câu chuyện 3: audio làm đầy 10GB của Vercel nên chuyển qua GitHub Pages + jsDelivr
+- [ ] [Java/SQL](phong-van-java-sql.md): B1–B8, S6–S10
 
 ## Tuần 3 (9–15/11): Cốt lõi AI engineering là eval
 
@@ -63,6 +65,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 - [ ] Câu chuyện 4: iOS chặn `play()` sau một lần fetch chậm
 - [ ] Câu chuyện 5: Kronos / TimesFM không tìm ra hướng giá
 - [ ] Câu chuyện 6: bộ eval email (vừa làm)
+- [ ] [Java/SQL](phong-van-java-sql.md): A7–A11, bài tập SQL 1–4
 
 ## Tuần 4 (16–22/11): Đưa app AI lên production đàng hoàng
 
@@ -77,11 +80,13 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 
 **PV**
 - [ ] Mock interview #1 với Claude (tiếng Việt, hỏi xoáy kiến trúc và cách dùng AI)
+- [ ] [Java/SQL](phong-van-java-sql.md): B9–B12, S11–S20
 
 ## Tuần 5 (23–29/11): Tiếng Hàn và chiều sâu
 
 **Java**
-- [ ] Ôn câu hỏi nền: collections, concurrency, JVM memory/GC, `@Transactional`, JPA N+1
+- [ ] Ôn câu hỏi nền: collections, concurrency, JVM memory/GC, `@Transactional`, JPA N+1 ([phần C và câu nền](phong-van-java-sql.md))
+- [ ] Bài tập SQL 5–8, đọc `EXPLAIN ANALYZE` của 1 query
 
 **Dùng AI**
 - [ ] Chạy `/code-review` trên PR của mình trước khi merge
@@ -96,7 +101,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 
 - [ ] README crypto-signal: sơ đồ kiến trúc, quyết định chính, mục "Cách tôi làm việc với AI"
 - [ ] README korean-practice: như trên
-- [ ] Mock #3 (đầy đủ, như phỏng vấn thật)
+- [ ] Mock #3 (đầy đủ, như phỏng vấn thật), có 15 câu Java/SQL trộn và 2 bài SQL viết tay
 - [ ] Chấm theo mốc 5/12 bên dưới
 
 ---
@@ -109,6 +114,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 - [ ] 6 câu chuyện, pitch có cả tiếng Việt và tiếng Hàn
 - [ ] Từ 80% PR trở lên chỉ merge sau khi trả lời đúng câu hỏi tự kiểm tra
 - [ ] Đã qua 3 buổi mock interview
+- [ ] Bảng ⚠️ trong [Java/SQL](phong-van-java-sql.md) không còn câu nào chưa ôn lại
 
 ## Câu hỏi phỏng vấn cần chuẩn bị
 
@@ -120,6 +126,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 - [ ] Một quyết định bạn đã thay đổi, và vì sao
 - [ ] App gọi AI xử lý lỗi, timeout và chi phí thế nào?
 - [ ] Làm lại từ đầu thì bạn đổi gì?
+- [ ] Java, Spring, SQL theo project: xem [phong-van-java-sql.md](phong-van-java-sql.md)
 
 ---
 
