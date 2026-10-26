@@ -508,6 +508,51 @@ public class SlipNoService {
 ```
 Đánh đổi: transaction chính lỗi thì số đã lấy bị bỏ, dãy số có lỗ hổng. **Phải hỏi khách/BA xem có được phép nhảy số không** (phiếu kế toán đôi khi bắt buộc liên tục). Nếu việc lấy số nằm **bên trong** procedure thì phải sửa procedure (tách ra procedure riêng có `PRAGMA AUTONOMOUS_TRANSACTION`, hoặc chuyển ra Java như trên), đi qua DBA.
 
+### Thực tế ở dự án: SP tự `COMMIT`, sai trạng thái thì `ROLLBACK` trong SP và trả `-1`
+
+**Vì sao thêm `@Transactional` mà không rollback được:** `COMMIT` trong SP commit **toàn bộ** những gì đã làm trên connection đó, kể cả các câu mà Java chạy trước đó trong cùng `@Transactional`. Khi Spring muốn rollback thì không còn gì để rollback. Thêm nữa, SP trả `-1` chứ không ném exception, nên Spring tưởng là thành công và commit luôn.
+
+```
+@Transactional (Spring) ─┬─ Java: INSERT/UPDATE ...      ┐
+                          ├─ call SP ─┬─ ... xử lý ...    │ COMMIT trong SP commit hết cả khối này
+                          │           └─ COMMIT ──────────┘
+                          └─ Spring rollback ──> không còn gì để rollback
+```
+Kết luận: **ranh giới transaction ở đây là SP, không phải Spring.** Đừng cố quản lý transaction từ Java cho phần SP.
+
+**Cách xử lý hợp với dự án maintain:**
+
+1. **Bỏ `@Transactional` vừa thêm** (trả về như cũ) và ghi comment: `// Transaction do SP quản lý (SP tự COMMIT/ROLLBACK)`. Giữ nó thì vừa không rollback được, vừa giữ connection lâu hơn. Nếu trước SP có câu khoá dòng (ví dụ lấy `slip_no` từ bảng đánh số) thì khoá còn bị giữ tới tận `COMMIT` của SP. Nên kiểm xem sau khi thêm `@Transactional`, timeout có xảy ra nhiều hơn không.
+2. **Đổi `-1` thành phản hồi đúng nghĩa, và coi lần gọi lại là thành công:**
+   ```java
+   // Không @Transactional: SP tự quản lý transaction
+   public CancelResult confirm(long orderId, String userId) {
+       Order order = orderMapper.findById(orderId);
+       if (order.isCancelConfirmed()) {
+           return CancelResult.alreadyConfirmed(order);      // lần gọi lại sau timeout: không sinh slip_no mới
+       }
+
+       String slipNo = slipNoService.next(order.getStoreCode());
+       ConfirmCancelParam p = new ConfirmCancelParam(orderId, userId, slipNo);
+       orderMapper.callConfirmCancel(p);                     // OUT param resultCode được MyBatis gán vào p
+
+       if (p.getResultCode() == -1) {                        // SP đã tự ROLLBACK
+           Order now = orderMapper.findById(orderId);
+           if (now.isCancelConfirmed()) {
+               return CancelResult.alreadyConfirmed(now);    // người khác hoặc lần trước đã xác nhận xong
+           }
+           throw new BusinessException(ErrorCode.INVALID_ORDER_STATUS);   // 409 cho app
+       }
+       return CancelResult.ok(slipNo);
+   }
+   ```
+3. **App:** bị read timeout thì tìm kiếm lại để xem trạng thái (như đã nói ở lớp 4).
+4. **Kiểm 2 điều trong SP** trước khi đặt timeout ở server:
+   - **Có mấy chỗ `COMMIT`, nằm ở đâu?** Chỉ một chỗ ở cuối thì SP là "tất cả hoặc không gì cả": timeout cắt ngang giữa chừng thì phần chưa commit bị huỷ, an toàn. Có `COMMIT` ở giữa (ví dụ trong vòng lặp) thì cắt ngang sẽ để lại dữ liệu **nửa chừng**: không đặt timeout ở server.
+   - **Đoạn kiểm trạng thái có khoá dòng không?** (`SELECT ... FOR UPDATE` hoặc `UPDATE ... WHERE status = ...`). Chỉ `SELECT` bình thường thì hai người bấm cùng lúc đều qua được, đơn bị xử lý hai lần với hai `slip_no` khác nhau.
+
+**Góc phỏng vấn:** "Em thêm `@Transactional` nhưng rollback không chạy. Tìm ra là vì SP tự commit, nên ranh giới transaction thật sự nằm ở SP. Em không sửa SP (rủi ro cao, phải qua DBA) mà sửa ở Java: xử lý mã trả về `-1`, chặn gọi lại, và để app kiểm lại trạng thái khi timeout." Câu này cho thấy hiểu transaction ở mức connection, không chỉ biết dùng annotation.
+
 **Câu hỏi phỏng vấn có thể đi từ chuyện này:**
 - Timeout ở client có làm server dừng không? (Không. Servlet không biết client đã ngắt cho tới khi ghi response.)
 - Vì sao không chỉ tăng timeout của app lên 60 giây? (Che triệu chứng; server chậm hơn 60 giây thì lại y như cũ; người dùng phải chờ lâu; vẫn có trường hợp app báo sai.)
