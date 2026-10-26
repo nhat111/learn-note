@@ -317,7 +317,7 @@ Bản chất: hết timeout **không có nghĩa là thất bại**, mà là **kh
 | | |
 |---|---|
 | **Vấn đề** | App báo lỗi khi xác nhận huỷ, nhưng dữ liệu đã được cập nhật. Người dùng `___` (bấm lại / báo lỗi / ...) |
-| **Nguyên nhân** | Server mất `___` giây (> 30s timeout của app) vì `___`. App coi timeout là thất bại |
+| **Nguyên nhân** | Khoảng 1/3 số lần, server mất `___` giây (> 30s timeout của app) ở câu `MERGE` vì `___` (chờ khoá / thiếu index). App coi timeout là thất bại |
 | **Cách tìm ra** | `___` (log thời gian của API, `ClientAbortException` trong log, thời điểm commit so với thời điểm app báo lỗi) |
 | **Cách sửa** | `___` (xem các lớp bên dưới) |
 | **Kết quả** | API còn `___` giây; số lần báo sai `___` → `___` |
@@ -371,6 +371,51 @@ Bản chất: hết timeout **không có nghĩa là thất bại**, mà là **kh
    Trong lúc chờ thì khoá nút bấm và hiện "đang xử lý". Phân biệt `setConnectTimeout` (không kết nối được, chắc chắn server chưa nhận gì) với `setReadTimeout` (đã gửi rồi, đang chờ trả lời: **không biết kết quả**).
 
 5. *(Nếu việc này vốn dĩ lâu)* Đổi sang bất đồng bộ: API nhận yêu cầu, trả `202 Accepted` ngay, xử lý ở nền; app hỏi lại trạng thái hoặc nhận push khi xong.
+
+### Chẩn đoán thực tế: lỗi 1/3 số lần, transaction có câu `MERGE`
+
+**Bước 1: so thời gian của request thành công với request bị timeout** (chỉ cần log, chưa sửa code).
+
+| Request thành công mất | Nhiều khả năng là | Hướng sửa |
+|---|---|---|
+| Cũng chậm, khoảng 20–30 giây | `MERGE` chậm (full scan): thời gian dao động quanh mốc 30s nên lúc qua lúc không | Index cho cột trong `ON (...)` |
+| Nhanh (1–2 giây), chỉ lần lỗi mới vượt 30s | **Chờ khoá**: lần đó trùng lúc session khác (người dùng khác, batch) đang giữ dòng mà `MERGE` cần | Rút ngắn thời gian giữ khoá, `WAIT n` |
+
+Muốn đo từng câu thì bật log SQL của mapper (`logging.level.<package mapper>=DEBUG`), hoặc log thời gian quanh từng lời gọi mapper trong `confirm`.
+
+**Bước 2: hỏi Oracle** (cần quyền đọc `V$`, nhờ DBA nếu không có):
+```sql
+-- Thời gian trung bình của câu MERGE (đơn vị giây)
+SELECT sql_id, executions,
+       ROUND(elapsed_time / NULLIF(executions, 0) / 1e6, 2) AS avg_sec,
+       ROUND(buffer_gets  / NULLIF(executions, 0))          AS gets_per_exec
+FROM v$sql
+WHERE sql_text LIKE 'MERGE INTO TEN_BANG%';
+
+-- Execution plan: tìm TABLE ACCESS FULL trên bảng đích
+SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY_CURSOR('<sql_id>'));
+
+-- Chạy NGAY LÚC đang bị treo: session của app đang chờ gì, ai đang chặn nó
+SELECT sid, sql_id, event, blocking_session, last_call_et AS sec
+FROM v$session
+WHERE username = 'APP_USER' AND status = 'ACTIVE';
+
+-- Bảng đích có index trên các cột trong ON (...) chưa
+SELECT index_name, column_name, column_position
+FROM all_ind_columns
+WHERE table_name = 'TEN_BANG'
+ORDER BY index_name, column_position;
+```
+`event = 'enq: TX - row lock contention'` kèm `blocking_session` là chờ khoá. Còn `db file scattered read` / `db file sequential read` là đang đọc dữ liệu: query chậm.
+
+**Bước 3: sửa theo thứ tự ít rủi ro nhất cho dự án maintain:**
+
+1. **Không đổi code:** thiếu index cho cột trong `ON (...)` thì thêm index (qua DBA, theo quy trình change của khách). Thường đây là cách sửa lớn nhất mà rủi ro nhỏ nhất.
+2. **Đổi một chút trong service:** chuyển câu `MERGE` (hoặc câu khoá dòng dùng chung, như tồn kho hay số liệu tổng hợp) xuống **cuối** transaction, để khoá bị giữ ngắn nhất; gọi API ngoài thì đưa ra khỏi transaction (`SP30`).
+3. **Lưới an toàn (nhỏ, nên làm luôn):** API xác nhận trả "đã xác nhận" khi gọi lại (lớp 3); app bị read timeout thì gọi lại **API tìm kiếm có sẵn** để kiểm tra trạng thái (lớp 4), không cần làm API mới.
+4. **Timeout ở server (lớp 2): chỉ làm sau khi đã sửa bước 1–2.** Đặt timeout khi gốc vẫn còn chậm thì 1/3 số lần "báo lỗi nhưng thật ra đã xong" sẽ thành 1/3 số lần **thất bại thật**, người dùng không xác nhận được.
+
+**Bẫy riêng của `MERGE`:** hai session cùng `MERGE` một key **chưa có**: cả hai đều thấy "không khớp" nên cùng `INSERT`, và một bên dính `ORA-00001` (Spring báo `DuplicateKeyException`). Nếu key đó có thể được tạo đồng thời thì bắt lỗi này rồi chạy lại `MERGE` một lần (lần sau sẽ rơi vào nhánh `UPDATE`).
 
 **Câu hỏi phỏng vấn có thể đi từ chuyện này:**
 - Timeout ở client có làm server dừng không? (Không. Servlet không biết client đã ngắt cho tới khi ghi response.)
