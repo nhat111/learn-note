@@ -6,3 +6,4 @@ Ghi chú học tập cá nhân.
 - [Vibe coding hiệu quả cho dev](vibe-coding-hieu-qua.md): quy trình, skills, nguồn tài liệu
 - [Phỏng vấn Java + SQL](phong-van-java-sql.md): plan ôn, câu hỏi và bài tập SQL bám theo korean-practice và crypto-signal
 - [Phỏng vấn: dự án công ty](du-an-cong-ty.md): bán lẻ (Shinsegae), Spring + MyBatis + Oracle, xác nhận huỷ, N+1 (**ưu tiên số 1**)
+- [Câu hỏi Java + Spring](cau-hoi-java-spring.md): 76 câu chung (Java core, Spring, transaction, security, test) có gắn mức độ ⭐

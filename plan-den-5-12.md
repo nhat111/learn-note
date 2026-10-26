@@ -39,6 +39,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 - [ ] Java 21: record, sealed interface + `switch` pattern matching
 - [ ] Virtual threads: vì sao hợp với lời gọi AI có thể chặn tới 120 giây
 - [ ] Spring: `@ConfigurationProperties`, filter khác interceptor thế nào, `@ControllerAdvice`, test với MockMvc
+- [ ] [Câu hỏi Java + Spring](cau-hoi-java-spring.md): hết các câu ⭐
 - [ ] **Tự viết** (AI chỉ giải thích khái niệm): giới hạn số request cho `/api/roleplay` theo access key, kèm test
 - [ ] Đưa Claude review bài đó như một senior
 
@@ -89,6 +90,7 @@ Mục tiêu: từ **bậc 1** (prompting, vibe coding) lên **bậc 3** (tự vi
 
 **Java**
 - [ ] Ôn câu hỏi nền: collections, concurrency, JVM memory/GC, `@Transactional`, JPA N+1 ([phần C và câu nền](phong-van-java-sql.md))
+- [ ] [Câu hỏi Java + Spring](cau-hoi-java-spring.md): các câu ⭐⭐, làm bài tự kiểm tra 10 câu ở cuối file
 - [ ] Bài tập SQL 5–8, đọc `EXPLAIN ANALYZE` của 1 query
 
 **Dùng AI**
