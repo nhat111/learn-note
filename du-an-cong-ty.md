@@ -8,7 +8,7 @@
 | Backend | Java, Spring, MyBatis 2.2.2, Oracle |
 | Client | App Android |
 | Phần mình làm | Chức năng xác nhận huỷ |
-| Chuyện kỹ thuật | Tối ưu N+1 query ở một chức năng cũ |
+| Chuyện kỹ thuật | Tối ưu N+1 query ở một chức năng cũ; app báo timeout nhưng server vẫn cập nhật (mục 9) |
 | Team | 3 dev, waterfall |
 | Cần điền thêm | Spring Boot `___`, Java `___`, Oracle `___`, thời gian tham gia `___` tháng |
 
@@ -297,10 +297,94 @@ Qua `___` (BrSE / comtor / trực tiếp), bằng `___` (email, KakaoWork, Jira)
 
 ---
 
+## 9. Câu chuyện: app báo timeout nhưng server vẫn cập nhật dữ liệu
+
+**Chuyện thật:** app Android đặt timeout 30 giây. Người dùng bấm xác nhận huỷ, app rơi vào `catch` và báo lỗi. Nhưng backend vẫn chạy tiếp và cập nhật xong; người dùng tìm kiếm lại thì thấy đơn đã được huỷ.
+
+**Vì sao:** timeout ở phía app chỉ làm **app ngừng chờ**. Nó không báo gì cho server, server cũng không biết app đã bỏ đi.
+```
+ 0s  App gửi POST ───────────────>  Server mở transaction, bắt đầu xử lý
+                                    ... chậm (chờ khoá, query chậm, gọi API ngoài) ...
+30s  App hết read timeout → catch → báo "thất bại"
+35s                                 Server commit xong, ghi response vào kết nối đã đóng
+                                    → log Tomcat có ClientAbortException / Broken pipe
+40s  Người dùng tìm lại → đơn đã huỷ (app vừa báo sai)
+```
+Bản chất: hết timeout **không có nghĩa là thất bại**, mà là **không biết kết quả**.
+
+**Điền khung câu chuyện:**
+
+| | |
+|---|---|
+| **Vấn đề** | App báo lỗi khi xác nhận huỷ, nhưng dữ liệu đã được cập nhật. Người dùng `___` (bấm lại / báo lỗi / ...) |
+| **Nguyên nhân** | Server mất `___` giây (> 30s timeout của app) vì `___`. App coi timeout là thất bại |
+| **Cách tìm ra** | `___` (log thời gian của API, `ClientAbortException` trong log, thời điểm commit so với thời điểm app báo lỗi) |
+| **Cách sửa** | `___` (xem các lớp bên dưới) |
+| **Kết quả** | API còn `___` giây; số lần báo sai `___` → `___` |
+
+**Cách sửa, theo từng lớp (nên làm cả 4):**
+
+1. **Tìm vì sao server chậm hơn 30 giây.** Đây mới là nguyên nhân gốc. Hay gặp nhất:
+   - Chờ khoá: `SELECT ... FOR UPDATE` (không có `NOWAIT`/`WAIT`) đứng chờ một session khác (batch, người dùng khác) đang giữ dòng đó.
+   - Query chậm hoặc N+1 (mục 3).
+   - Gọi API ngoài (hoàn tiền, POS) bên trong transaction (`Q5`, `SP30`).
+
+2. **Timeout của server phải ngắn hơn timeout của app**, để server tự rollback trước khi app bỏ đi:
+   ```java
+   @Transactional(timeout = 20)          // giây; MyBatis-Spring áp nó làm query timeout cho các câu SQL
+   public CancelResult confirm(long orderId, String userId) { ... }
+   ```
+   ```xml
+   <!-- hoặc đặt cho từng câu: -->
+   <update id="confirmCancel" timeout="10"> ... </update>
+   <!-- và không chờ khoá vô hạn: -->
+   SELECT ... FROM orders WHERE order_id = #{orderId} FOR UPDATE WAIT 5
+   ```
+   Thứ tự nên là: timeout của câu SQL < timeout của transaction < timeout của proxy/load balancer < timeout của app.
+   Lớp này **không loại hết** được vấn đề: server vẫn có thể commit ở giây 29,9 và response tới app chậm hơn một chút. Nên vẫn cần lớp 3 và 4.
+
+3. **API phải idempotent:** gọi lại lần hai thì trả kết quả như lần đầu, không làm lại:
+   ```java
+   int updated = orderMapper.confirmCancel(orderId, userId);   // UPDATE ... WHERE status = 'CANCEL_REQUESTED'
+   if (updated == 0) {
+       Order o = orderMapper.findById(orderId);
+       if ("CANCEL_CONFIRMED".equals(o.getStatus())) {
+           return CancelResult.alreadyConfirmed(o);            // 200: lần trước đã làm xong rồi
+       }
+       throw new BusinessException(ErrorCode.INVALID_ORDER_STATUS);   // 409
+   }
+   ```
+   Các việc kèm theo (hoàn tiền, trả tồn kho) cũng không được chạy lần hai. Việc này cũng che luôn trường hợp app hoặc thư viện HTTP tự gửi lại request.
+
+4. **App: timeout thì hỏi lại kết quả, không báo thất bại ngay:**
+   ```java
+   try {
+       CancelResult r = api.confirmCancel(orderId);
+       showSuccess(r);
+   } catch (SocketTimeoutException e) {
+       // Không biết server đã làm xong chưa: hỏi lại trạng thái đơn
+       Order o = api.getOrder(orderId);
+       if (o.isCancelConfirmed()) showSuccess(o);
+       else showError("Chưa xác nhận được, vui lòng thử lại");
+   }
+   ```
+   Trong lúc chờ thì khoá nút bấm và hiện "đang xử lý". Phân biệt `setConnectTimeout` (không kết nối được, chắc chắn server chưa nhận gì) với `setReadTimeout` (đã gửi rồi, đang chờ trả lời: **không biết kết quả**).
+
+5. *(Nếu việc này vốn dĩ lâu)* Đổi sang bất đồng bộ: API nhận yêu cầu, trả `202 Accepted` ngay, xử lý ở nền; app hỏi lại trạng thái hoặc nhận push khi xong.
+
+**Câu hỏi phỏng vấn có thể đi từ chuyện này:**
+- Timeout ở client có làm server dừng không? (Không. Servlet không biết client đã ngắt cho tới khi ghi response.)
+- Vì sao không chỉ tăng timeout của app lên 60 giây? (Che triệu chứng; server chậm hơn 60 giây thì lại y như cũ; người dùng phải chờ lâu; vẫn có trường hợp app báo sai.)
+- Idempotency là gì, làm ở tầng nào? (`Q3`, `SP21`.)
+- Nếu bước hoàn tiền gọi hệ thống khác thì sao? (`Q5`, `SP30`: tách transaction, trạng thái trung gian, job đối soát.)
+
+---
+
 ## Việc cần làm (thêm vào tuần 1–2 của plan)
 
 - [ ] Hỏi team hoặc xem lại code và ticket để điền hết các chỗ `___` (nhất là số liệu N+1)
 - [ ] Vẽ luồng xác nhận huỷ và sơ đồ trạng thái đơn trên giấy
 - [ ] Kiểm tra code xác nhận huỷ: đã chặn được trường hợp xác nhận đồng thời chưa (Q2)?
 - [ ] Viết lại câu chuyện N+1 theo bảng ở mục 3, tập nói dưới 2 phút
+- [ ] Câu chuyện timeout (mục 9): xem log để biết server thực tế mất bao nhiêu giây và chậm ở đâu, điền bảng, tập nói dưới 2 phút
 - [ ] Tập pitch ở mục 1 bằng tiếng Việt, rồi bằng tiếng Hàn (tuần 5)
