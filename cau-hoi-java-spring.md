@@ -5,6 +5,8 @@ Mã câu: `J` là Java, `SP` là Spring. Câu nào đã có trong file khác th�
 
 **Mức độ:** ⭐ gần như chắc chắn bị hỏi · ⭐⭐ hay gặp ở vòng kỹ thuật · ⭐⭐⭐ hỏi khi muốn đào sâu (mid/senior)
 
+Phần Spring (mục 5–13) có thêm ví dụ code, 🧪 thử tay và 📖 link tài liệu chính thức.
+
 **Thứ tự ôn:** hết ⭐ trước (tuần 2), rồi tới ⭐⭐ (tuần 3–5), còn dư thời gian mới làm ⭐⭐⭐. Câu nào có dòng **"Ở dự án"** thì tập trả lời bằng ví dụ ở công ty.
 
 ---
@@ -220,66 +222,349 @@ Có, khi object không còn dùng nhưng vẫn bị tham chiếu: `static` colle
 
 ---
 
+## Trước khi đọc phần Spring
+
+**Ví dụ dùng chung.** Mọi đoạn code bên dưới dùng cùng một nghiệp vụ cho dễ theo dõi: `CancelService` xác nhận huỷ đơn, gọi `OrderMapper` (MyBatis) và `CancelHistoryMapper`. Code là ví dụ minh hoạ, không phải code của dự án thật.
+
+**Đọc tài liệu.** Link 📖 dẫn tới tài liệu chính thức bản mới nhất (Spring Framework 6, Spring Boot 3). Với Spring Boot 2.x như dự án đang dùng thì khái niệm vẫn y như vậy, chỉ khác mấy chỗ:
+- `javax.*` (Boot 2) đổi thành `jakarta.*` (Boot 3), ví dụ `javax.validation.Valid` → `jakarta.validation.Valid`.
+- Spring Security 5.7 trở về trước dùng `WebSecurityConfigurerAdapter` và `antMatchers`; bản mới dùng bean `SecurityFilterChain` và `requestMatchers`.
+- Muốn đọc đúng bản 2.7 thì vào [Spring Boot 2.7 reference](https://docs.spring.io/spring-boot/docs/2.7.x/reference/html/).
+
+**🧪 Thử tay** là những chỗ nên tự chạy. Tạo nhanh một project ở [start.spring.io](https://start.spring.io) (chọn Spring Web, JDBC API, H2), chép code vào rồi chạy. Tự thấy log in ra thì nhớ lâu hơn đọc nhiều.
+
+---
+
 ## 5. Spring Core: IoC, DI, Bean
 
 **SP1. ⭐ IoC và DI là gì? Lợi ích thật là gì?**
 <details><summary>Gợi ý</summary>
 
-IoC: container (`ApplicationContext`) tạo và nối các object thay vì code tự `new`. DI là một cách làm IoC: phụ thuộc được truyền vào. Lợi ích: thay cài đặt mà không sửa code dùng nó, test dễ (truyền mock vào), cấu hình nằm một chỗ, và Spring bọc thêm được proxy (transaction, AOP).
+IoC: container (`ApplicationContext`) tạo object và nối chúng với nhau, thay vì code tự `new`. DI là một cách làm IoC: phụ thuộc được truyền vào từ bên ngoài.
+
+**Ví dụ:**
+```java
+// Không DI: CancelService tự tạo SmsSender, nên
+// - muốn đổi sang push notification phải sửa CancelService
+// - test thì gửi SMS thật
+public class CancelService {
+    private final SmsSender sender = new SmsSender();
+}
+
+// Có DI: CancelService chỉ biết interface, Spring truyền cài đặt vào
+public interface NotificationSender { void send(String to, String msg); }
+
+@Component
+public class PushSender implements NotificationSender { ... }
+
+@Service
+public class CancelService {
+    private final NotificationSender sender;
+    public CancelService(NotificationSender sender) { this.sender = sender; }
+}
+
+// Trong test thì không cần Spring, truyền bản giả vào:
+CancelService service = new CancelService((to, msg) -> {});
+```
+Lợi ích: đổi cài đặt mà không sửa code dùng nó, test dễ, và vì Spring giữ object nên nó bọc thêm được proxy (transaction, AOP).
+
+📖 [Dependency Injection](https://docs.spring.io/spring-framework/reference/core/beans/dependencies/factory-collaborators.html)
 </details>
 
 **SP2. ⭐ Inject qua constructor, setter hay field? Vì sao nên dùng constructor?**
 <details><summary>Gợi ý</summary>
 
-Constructor: field để `final` được, thiếu phụ thuộc thì báo lỗi ngay lúc khởi động, test chỉ cần `new Service(mock)` mà không cần Spring, và class có quá nhiều tham số tự lộ ra là đang làm quá nhiều việc. Field injection (`@Autowired` lên field) gọn nhưng giấu phụ thuộc và khó test. Lombok `@RequiredArgsConstructor` sinh constructor cho mọi field `final`.
+```java
+// Field injection: gọn, nhưng phụ thuộc bị giấu, field không final được,
+// test phải dùng reflection hoặc dựng cả Spring
+@Service
+public class CancelService {
+    @Autowired private OrderMapper orderMapper;
+    @Autowired private CancelHistoryMapper historyMapper;
+}
+
+// Constructor injection: nên dùng
+@Service
+public class CancelService {
+    private final OrderMapper orderMapper;
+    private final CancelHistoryMapper historyMapper;
+
+    // Chỉ có một constructor thì không cần @Autowired (từ Spring 4.3)
+    public CancelService(OrderMapper orderMapper, CancelHistoryMapper historyMapper) {
+        this.orderMapper = orderMapper;
+        this.historyMapper = historyMapper;
+    }
+}
+
+// Viết gọn bằng Lombok: sinh constructor cho mọi field final
+@Service
+@RequiredArgsConstructor
+public class CancelService {
+    private final OrderMapper orderMapper;
+    private final CancelHistoryMapper historyMapper;
+}
+```
+Lợi ích: field là `final`; thiếu bean thì app báo lỗi ngay lúc khởi động; test chỉ cần `new CancelService(mockA, mockB)`; constructor có tới 8 tham số là dấu hiệu class đang ôm quá nhiều việc.
+
+📖 [Constructor-based hay setter-based DI](https://docs.spring.io/spring-framework/reference/core/beans/dependencies/factory-collaborators.html)
 </details>
 
 **SP3. ⭐ `@Component`, `@Service`, `@Repository`, `@Controller` khác nhau thế nào? `@Bean` thì sao?**
 <details><summary>Gợi ý</summary>
 
-Cả bốn đều là `@Component` (để component scan tìm thấy), khác nhau ở ý nghĩa; `@Repository` còn được Spring đổi exception của DB sang `DataAccessException`. `@Bean` đặt trên method trong `@Configuration`: dùng khi tạo object của thư viện bên ngoài (không gắn annotation vào class đó được) hoặc khi việc tạo cần logic (`AiConfig` trong korean-practice).
+Cả bốn đều là `@Component` để component scan tìm thấy, chỉ khác ở ý nghĩa. `@Repository` có thêm việc đổi exception của DB sang `DataAccessException` của Spring.
+
+`@Bean` dùng khi object là của **thư viện bên ngoài** (không sửa class đó để gắn annotation được), hoặc khi việc tạo object cần cấu hình:
+```java
+@Configuration
+public class HttpConfig {
+    // RestTemplate là class của Spring, không gắn @Component vào được.
+    // Tạo bằng @Bean để đặt timeout một chỗ, mọi nơi inject dùng chung.
+    @Bean
+    public RestTemplate paymentRestTemplate(RestTemplateBuilder builder) {
+        return builder
+                .rootUri("https://payment.example.com")
+                .setConnectTimeout(Duration.ofSeconds(3))
+                .setReadTimeout(Duration.ofSeconds(10))
+                .build();
+    }
+}
+```
+
+📖 [`@Bean` và `@Configuration`](https://docs.spring.io/spring-framework/reference/core/beans/java/basic-concepts.html)
 </details>
 
 **SP4. ⭐ Có 2 bean cùng kiểu thì Spring inject cái nào?**
 <details><summary>Gợi ý</summary>
 
-Không làm gì thì lỗi `NoUniqueBeanDefinitionException`. Cách giải: `@Primary` (bean mặc định), `@Qualifier("name")` tại chỗ inject, hoặc inject `List<Interface>`/`Map<String, Interface>` để lấy hết (Strategy pattern: mỗi phương thức thanh toán một bean, chọn theo key). Ví dụ: hai `DataSource` (Oracle chính và DB khác) → hai `SqlSessionFactory`.
+Không làm gì thì app không khởi động được, lỗi `NoUniqueBeanDefinitionException: expected single matching bean but found 2`.
+
+**Cách 1: `@Primary` hoặc `@Qualifier`**
+```java
+@Component @Primary
+public class PushSender implements NotificationSender { ... }
+
+@Component("smsSender")
+public class SmsSender implements NotificationSender { ... }
+
+@Service
+public class CancelService {
+    // Không ghi gì thì nhận PushSender (@Primary); muốn SMS thì chỉ đích danh
+    public CancelService(@Qualifier("smsSender") NotificationSender sender) { ... }
+}
+```
+
+**Cách 2: lấy tất cả rồi chọn theo key (Strategy pattern).** Hợp với hoàn tiền theo từng phương thức thanh toán:
+```java
+public interface RefundHandler {
+    String paymentMethod();          // "CARD", "POINT", ...
+    void refund(Order order);
+}
+
+@Component class CardRefundHandler  implements RefundHandler { ... }
+@Component class PointRefundHandler implements RefundHandler { ... }
+
+@Service
+public class RefundService {
+    private final Map<String, RefundHandler> handlers;
+
+    public RefundService(List<RefundHandler> all) {   // Spring truyền mọi bean RefundHandler
+        this.handlers = all.stream()
+                .collect(Collectors.toMap(RefundHandler::paymentMethod, h -> h));
+    }
+
+    public void refund(Order order) {
+        RefundHandler h = handlers.get(order.getPaymentMethod());
+        if (h == null) throw new IllegalStateException("No refund handler for " + order.getPaymentMethod());
+        h.refund(order);
+    }
+}
+```
+Thêm phương thức thanh toán mới thì chỉ thêm một class, không sửa `RefundService`.
+
+**Với MyBatis, hay gặp khi có 2 DB:** mỗi DB một `SqlSessionFactory`, và mapper được gắn với factory theo package:
+```java
+@MapperScan(basePackages = "com.x.mapper.main", sqlSessionFactoryRef = "mainSqlSessionFactory")
+```
+
+📖 [`@Primary` và `@Qualifier`](https://docs.spring.io/spring-framework/reference/core/beans/annotation-config/autowired-qualifiers.html)
 </details>
 
 **SP5. ⭐ Bean scope có những loại nào? Mặc định là gì?**
 <details><summary>Gợi ý</summary>
 
-`singleton` (mặc định, một object cho cả container), `prototype` (mỗi lần lấy một object mới), và với web thêm `request`, `session`, `application`. Singleton dùng chung cho mọi request, nên **không được giữ state của request trong field** của service/controller.
+`singleton` (mặc định: cả app chỉ có một object), `prototype` (mỗi lần lấy là một object mới), và trong web có thêm `request`, `session`, `application`.
+
+Vì service là singleton nên **mọi request dùng chung một object**. Giữ dữ liệu của request trong field là bug:
+```java
+@Service
+public class CancelService {
+    private Order current;              // BUG: field dùng chung cho mọi request
+
+    public void confirm(long orderId) {
+        current = orderMapper.findById(orderId);
+        // ... trong lúc này request khác gọi confirm(), ghi đè current ...
+        current.setStatus("CANCEL_CONFIRMED");
+        orderMapper.update(current);    // có thể đang update nhầm đơn của người khác
+    }
+}
+
+// Đúng: dữ liệu của request để trong biến cục bộ (mỗi thread một bản riêng)
+public void confirm(long orderId) {
+    Order order = orderMapper.findById(orderId);
+    order.setStatus("CANCEL_CONFIRMED");
+    orderMapper.update(order);
+}
+```
+Bug này chỉ lộ ra khi có nhiều người dùng cùng lúc, nên test một mình thì không thấy. Khi maintain code cũ, gặp field không phải `final` trong `@Service` hay `@Controller` thì nên dừng lại kiểm tra.
+
+📖 [Bean scopes](https://docs.spring.io/spring-framework/reference/core/beans/factory-scopes.html)
 </details>
 
 **SP6. ⭐⭐ Inject một bean `prototype` vào bean `singleton` thì sao?**
 <details><summary>Gợi ý</summary>
 
-Chỉ inject một lần lúc tạo singleton, nên prototype trở thành "một object duy nhất" luôn. Muốn mỗi lần dùng một object mới thì inject `ObjectProvider<T>` rồi gọi `getObject()`, hoặc dùng `@Lookup`, hoặc scoped proxy.
+```java
+@Component
+@Scope("prototype")
+public class CancelReportBuilder {      // có state, mỗi lần dùng cần một object mới
+    private final List<String> lines = new ArrayList<>();
+    public void add(String line) { lines.add(line); }
+    public String build() { return String.join("\n", lines); }
+}
+
+@Service
+public class ReportService {
+    private final CancelReportBuilder builder;   // SAI: chỉ inject MỘT lần khi tạo ReportService
+    // => mọi lần gọi đều dùng chung một builder, các dòng cứ dồn lại
+}
+
+@Service
+public class ReportService {
+    private final ObjectProvider<CancelReportBuilder> builders;   // ĐÚNG
+
+    public String report(List<Order> orders) {
+        CancelReportBuilder b = builders.getObject();   // mỗi lần gọi là một object mới
+        orders.forEach(o -> b.add(o.getOrderNo()));
+        return b.build();
+    }
+}
+```
+
+📖 [Singleton bean dùng prototype bean](https://docs.spring.io/spring-framework/reference/core/beans/factory-scopes.html#beans-factory-scopes-sing-prot-interaction)
 </details>
 
 **SP7. ⭐⭐ Vòng đời của một bean.**
 <details><summary>Gợi ý</summary>
 
-Tạo object → inject phụ thuộc → các callback `*Aware` → `BeanPostProcessor` (trước init) → `@PostConstruct` / `afterPropertiesSet` / `init-method` → `BeanPostProcessor` (sau init: **chỗ Spring tạo proxy** cho `@Transactional`, `@Async`) → dùng → `@PreDestroy` khi tắt app. Vì proxy được tạo sau `@PostConstruct`, gọi method `@Transactional` của chính nó trong `@PostConstruct` sẽ không có transaction.
+Tạo object → inject phụ thuộc → các callback `*Aware` → `BeanPostProcessor` (trước init) → `@PostConstruct` → `BeanPostProcessor` (sau init: **chỗ Spring bọc proxy** cho `@Transactional`, `@Async`) → dùng → `@PreDestroy` khi tắt app.
+
+**Ví dụ hay gặp:** nạp bảng mã cửa hàng vào bộ nhớ khi khởi động.
+```java
+@Component
+public class StoreCodeCache {
+    private final StoreMapper storeMapper;
+    private volatile Map<String, String> names = Map.of();
+
+    public StoreCodeCache(StoreMapper storeMapper) { this.storeMapper = storeMapper; }
+
+    @PostConstruct      // Boot 2: javax.annotation.PostConstruct; Boot 3: jakarta.annotation.PostConstruct
+    void load() {       // chạy một lần, sau khi storeMapper đã được inject
+        names = storeMapper.findAll().stream()
+                .collect(Collectors.toMap(Store::getCode, Store::getName));
+    }
+
+    @PreDestroy
+    void close() { /* giải phóng tài nguyên nếu có */ }
+}
+```
+Bẫy: trong `@PostConstruct`, proxy của chính bean đó chưa được tạo, nên gọi method `@Transactional` của chính nó ở đây sẽ không có transaction. Việc nặng chạy lúc khởi động thì dùng `ApplicationRunner` hoặc nghe event `ApplicationReadyEvent`.
+
+📖 [Lifecycle callbacks](https://docs.spring.io/spring-framework/reference/core/beans/factory-nature.html)
 </details>
 
 **SP8. ⭐⭐ Circular dependency là gì? Spring Boot xử lý thế nào?**
 <details><summary>Gợi ý</summary>
 
-A cần B, B lại cần A. Từ Spring Boot 2.6, mặc định **cấm** và báo lỗi lúc khởi động (`spring.main.allow-circular-references=false`). Với constructor injection thì không bao giờ giải được. Sửa đúng là tách phần dùng chung ra một bean thứ ba, hoặc dùng event; `@Lazy` chỉ là cách chữa cháy.
+```java
+@Service
+public class OrderService {
+    public OrderService(CancelService cancelService) { ... }   // Order cần Cancel
+}
+
+@Service
+public class CancelService {
+    public CancelService(OrderService orderService) { ... }    // Cancel lại cần Order
+}
+```
+Từ Spring Boot 2.6, app **không khởi động được** và in ra:
+```
+The dependencies of some of the beans in the application context form a cycle:
+┌─────┐
+|  orderService
+↑     ↓
+|  cancelService
+└─────┘
+```
+Sửa đúng: tách phần mà hai bên cùng cần ra một bean thứ ba (ví dụ `OrderQueryService` chỉ đọc đơn), hoặc dùng event (SP10) để một bên không cần biết bên kia. `@Lazy` hay `spring.main.allow-circular-references=true` chỉ là cách chữa cháy. Code cũ chạy được trên Boot 2.5 mà lên 2.6 thì chết là vì lý do này.
+
+📖 [Circular dependencies](https://docs.spring.io/spring-framework/reference/core/beans/dependencies/factory-collaborators.html) · [Spring Boot 2.6 release notes](https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-2.6-Release-Notes)
 </details>
 
 **SP9. ⭐⭐⭐ `@Configuration` khác `@Component` khi chứa method `@Bean` ở chỗ nào?**
 <details><summary>Gợi ý</summary>
 
-Spring bọc class `@Configuration` bằng CGLIB, nên một method `@Bean` gọi một method `@Bean` khác vẫn nhận lại **đúng singleton** trong container. Trong `@Component` (gọi là "lite mode", hoặc `@Configuration(proxyBeanMethods = false)`) thì đó là lời gọi Java bình thường, mỗi lần gọi tạo một object mới.
+```java
+@Configuration          // Spring bọc class này bằng CGLIB
+public class AppConfig {
+    @Bean public Clock clock() { return Clock.system(ZoneId.of("Asia/Seoul")); }
+
+    @Bean public CancelPolicy cancelPolicy() {
+        return new CancelPolicy(clock());   // vẫn nhận lại ĐÚNG bean clock trong container
+    }
+}
+```
+Đổi `@Configuration` thành `@Component` (hoặc `@Configuration(proxyBeanMethods = false)`) thì `clock()` là lời gọi Java bình thường và tạo ra một `Clock` **mới**, khác với bean `clock` đã đăng ký. Với object có state (connection pool chẳng hạn) thì thành ra có hai pool.
+
+📖 [`@Configuration`](https://docs.spring.io/spring-framework/reference/core/beans/java/configuration-annotation.html)
 </details>
 
 **SP10. ⭐⭐ `ApplicationEvent` và `@TransactionalEventListener` dùng làm gì?** *(gắn với xác nhận huỷ)*
 <details><summary>Gợi ý</summary>
 
-Bắn event để tách các việc phụ ra khỏi service chính: `publisher.publishEvent(new CancelConfirmedEvent(orderId))`. Dùng `@TransactionalEventListener(phase = AFTER_COMMIT)` để việc gửi thông báo (push tới app Android, gửi SMS) chỉ chạy **sau khi DB đã commit**: transaction rollback thì không gửi nhầm "đã huỷ thành công". Muốn không chặn request thì thêm `@Async`.
+```java
+public record CancelConfirmedEvent(long orderId, String customerId) {}
+
+@Service
+@RequiredArgsConstructor
+public class CancelService {
+    private final OrderMapper orderMapper;
+    private final ApplicationEventPublisher events;
+
+    @Transactional
+    public void confirm(long orderId, String userId) {
+        Order order = orderMapper.findById(orderId);
+        // ... cập nhật trạng thái, trả tồn kho, ghi lịch sử ...
+        events.publishEvent(new CancelConfirmedEvent(orderId, order.getCustomerId()));
+        // Không gửi push ở đây: lỡ phía dưới lỗi và rollback thì khách
+        // đã nhận thông báo "huỷ thành công" cho một đơn chưa huỷ.
+    }
+}
+
+@Component
+@RequiredArgsConstructor
+public class CancelNotificationListener {
+    private final NotificationSender sender;
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)  // chỉ chạy khi DB đã commit
+    public void on(CancelConfirmedEvent e) {
+        sender.send(e.customerId(), "Đơn " + e.orderId() + " đã được huỷ");
+    }
+}
+```
+Lợi ích thêm: `CancelService` không cần biết có những việc gì chạy sau khi huỷ (push, SMS, ghi thống kê). Thêm việc mới thì thêm một listener. Muốn listener không làm chậm response thì thêm `@Async`.
+
+📖 [Transaction-bound events](https://docs.spring.io/spring-framework/reference/data-access/transaction/event.html) · [ApplicationContext và event](https://docs.spring.io/spring-framework/reference/core/beans/context-introduction.html)
 </details>
 
 ---
@@ -289,19 +574,97 @@ Bắn event để tách các việc phụ ra khỏi service chính: `publisher.p
 **SP11. ⭐ AOP là gì? Spring dùng nó ở đâu?**
 <details><summary>Gợi ý</summary>
 
-Tách các việc cắt ngang nhiều chỗ (transaction, log, đo thời gian, kiểm quyền, cache) ra khỏi code nghiệp vụ. Spring tự dùng cho `@Transactional`, `@Async`, `@Cacheable`, `@PreAuthorize`. Tự viết: `@Aspect` + `@Around("execution(* com.x.service..*(..))")` để log thời gian chạy của mọi service.
+Tách các việc lặp lại ở nhiều chỗ (transaction, log, đo thời gian, kiểm quyền, cache) ra khỏi code nghiệp vụ. Spring tự dùng nó cho `@Transactional`, `@Async`, `@Cacheable`, `@PreAuthorize`.
+
+**Ví dụ:** log thời gian chạy của mọi method trong service, không phải sửa từng method (cần `spring-boot-starter-aop`):
+```java
+@Aspect
+@Component
+@Slf4j
+public class TimingAspect {
+    @Around("execution(* com.x.service..*(..))")   // mọi method trong package service
+    public Object time(ProceedingJoinPoint pjp) throws Throwable {
+        long start = System.nanoTime();
+        try {
+            return pjp.proceed();                    // gọi method thật
+        } finally {
+            long ms = (System.nanoTime() - start) / 1_000_000;
+            if (ms > 500) log.warn("{} took {} ms", pjp.getSignature().toShortString(), ms);
+        }
+    }
+}
+```
+Đây cũng là cách đơn giản để tìm ra chức năng chậm (trước khi đi tìm N+1).
+
+📖 [@AspectJ trong Spring](https://docs.spring.io/spring-framework/reference/core/aop/ataspectj.html)
 </details>
 
 **SP12. ⭐ Vì sao gọi method `@Transactional` (hoặc `@Async`, `@Cacheable`) từ method khác trong cùng class thì không có tác dụng?**
 <details><summary>Gợi ý</summary>
 
-Annotation có tác dụng nhờ **proxy** bọc ngoài bean. Gọi `this.method()` là gọi thẳng vào object thật, không đi qua proxy. Sửa: tách method ra một bean khác (cách sạch nhất), hoặc tự inject chính mình (`@Lazy` self), hoặc dùng `TransactionTemplate`. Đây là câu bị hỏi **rất nhiều**.
+Bean bro inject vào controller thực ra là một **proxy** bọc ngoài object thật. Proxy mở transaction rồi mới gọi vào object thật. Còn `this.method()` là gọi thẳng trong object thật, không đi qua proxy:
+
+```
+Controller ──> [Proxy: mở transaction] ──> CancelService thật
+                                              │
+                                              └── this.saveHistory()  ← không đi qua proxy
+```
+
+```java
+@Service
+public class CancelService {
+    public void confirmAll(List<Long> ids) {           // không có @Transactional
+        for (long id : ids) {
+            this.confirmOne(id);                       // SAI: gọi thẳng, KHÔNG có transaction
+        }
+    }
+
+    @Transactional
+    public void confirmOne(long id) {
+        orderMapper.confirmCancel(id);
+        stockMapper.restore(id);                       // lỗi ở đây: dòng trên KHÔNG rollback
+    }
+}
+```
+Sửa sạch nhất: chuyển `confirmOne` sang một bean khác (ví dụ `CancelWorker`) rồi inject vào. Cách khác: dùng `TransactionTemplate`:
+```java
+transactionTemplate.executeWithoutResult(status -> {
+    orderMapper.confirmCancel(id);
+    stockMapper.restore(id);
+});
+```
+
+🧪 **Thử tay:** in ra trong method xem có transaction không:
+```java
+log.info("tx active = {}", TransactionSynchronizationManager.isActualTransactionActive());
+```
+Gọi từ controller (qua proxy) thì in `true`, gọi qua `this.` thì in `false`. Hoặc bật log `logging.level.org.springframework.transaction.interceptor=TRACE` để xem dòng `Getting transaction for [...]`.
+
+📖 [Understanding AOP proxies](https://docs.spring.io/spring-framework/reference/core/aop/proxying.html) (có đúng ví dụ self-invocation) · [Dùng `@Transactional`](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/annotations.html)
 </details>
 
 **SP13. ⭐⭐ JDK dynamic proxy khác CGLIB thế nào?**
 <details><summary>Gợi ý</summary>
 
-JDK proxy: chỉ proxy được qua interface. CGLIB: tạo lớp con của class, nên không proxy được method `final`/`private` và class `final`. Spring Boot 2 trở lên mặc định dùng CGLIB (`proxyTargetClass = true`). Hệ quả: `@Transactional` trên method `private` hay `final` bị bỏ qua, không báo lỗi gì.
+JDK proxy chỉ proxy được qua interface. CGLIB tạo một **lớp con** của class, nên không proxy được method `final`/`private` và class `final`. Spring Boot 2 trở lên mặc định dùng CGLIB.
+
+🧪 **Thử tay:**
+```java
+@Component
+@RequiredArgsConstructor
+class ProxyCheck implements ApplicationRunner {
+    private final CancelService cancelService;
+    public void run(ApplicationArguments args) {
+        System.out.println(cancelService.getClass());
+        // Spring 5 (Boot 2): class com.x.CancelService$$EnhancerBySpringCGLIB$$1a2b3c
+        // Spring 6 (Boot 3): class com.x.CancelService$$SpringCGLIB$$0
+        // Không có @Transactional/@Async nào thì in ra đúng class gốc: không có proxy
+    }
+}
+```
+Hệ quả: `@Transactional` đặt trên method `private` hay `final` bị **bỏ qua mà không báo lỗi gì**.
+
+📖 [Proxying mechanisms](https://docs.spring.io/spring-framework/reference/core/aop/proxying.html)
 </details>
 
 ---
@@ -311,31 +674,129 @@ JDK proxy: chỉ proxy được qua interface. CGLIB: tạo lớp con của clas
 **SP14. ⭐ Spring Boot khác Spring Framework chỗ nào? `@SpringBootApplication` gồm gì?**
 <details><summary>Gợi ý</summary>
 
-Boot = Spring + **auto-configuration** + starter (gói phụ thuộc đi kèm nhau) + server nhúng (Tomcat) + cấu hình bên ngoài + Actuator. `@SpringBootApplication` = `@Configuration` + `@EnableAutoConfiguration` + `@ComponentScan` (quét từ package của class đó trở xuống: đặt class main sai package là không thấy bean).
+Boot = Spring + auto-configuration + starter (bộ phụ thuộc đi kèm nhau) + server nhúng (Tomcat) + cấu hình bên ngoài + Actuator.
+
+`@SpringBootApplication` = `@Configuration` + `@EnableAutoConfiguration` + `@ComponentScan`. Component scan quét **từ package của class main trở xuống**:
+```
+com.x.retail
+├── RetailApplication.java   ← @SpringBootApplication ở đây
+├── order/CancelService.java     ✓ được quét
+└── config/WebConfig.java        ✓ được quét
+com.x.common
+└── util/DateUtil.java           ✗ KHÔNG được quét (nằm ngoài com.x.retail)
+```
+Bean nằm ngoài thì báo lỗi `required a bean of type '...' that could not be found`.
+
+📖 [Dùng `@SpringBootApplication`](https://docs.spring.io/spring-boot/reference/using/using-the-springbootapplication-annotation.html)
 </details>
 
 **SP15. ⭐⭐ Auto-configuration hoạt động thế nào?**
 <details><summary>Gợi ý</summary>
 
-Boot nạp danh sách các class cấu hình tự động (Boot 2.7 trở lên: file `META-INF/spring/...AutoConfiguration.imports`; trước đó là `spring.factories`). Mỗi class có điều kiện: `@ConditionalOnClass` (có thư viện trong classpath không), `@ConditionalOnMissingBean` (người dùng đã tự khai báo chưa), `@ConditionalOnProperty`. Ví dụ: thêm `mybatis-spring-boot-starter` và có `DataSource` thì `SqlSessionFactory` tự được tạo. Xem bean nào được tạo và vì sao: chạy với `--debug` (in ra conditions report).
+Boot có sẵn rất nhiều class cấu hình, mỗi class kèm điều kiện. Ví dụ, viết lại cho dễ hiểu (không phải code thật của Boot):
+```java
+@AutoConfiguration
+@ConditionalOnClass(SqlSessionFactory.class)       // classpath có MyBatis không?
+@ConditionalOnSingleCandidate(DataSource.class)    // có đúng một DataSource không?
+public class MybatisAutoConfiguration {
+    @Bean
+    @ConditionalOnMissingBean                       // người dùng chưa tự khai báo thì mới tạo
+    public SqlSessionFactory sqlSessionFactory(DataSource ds) { ... }
+}
+```
+Vì vậy chỉ cần thêm `mybatis-spring-boot-starter` và cấu hình `spring.datasource.*` là đã có `SqlSessionFactory`. Tự khai báo bean `SqlSessionFactory` thì bản của Boot lùi lại.
+
+🧪 **Thử tay:** chạy app với `--debug` (hoặc đặt `debug=true` trong `application.yml`). Log in ra `CONDITIONS EVALUATION REPORT`, chia hai phần `Positive matches` (cấu hình nào đã chạy và vì sao) và `Negative matches` (cấu hình nào bị bỏ và vì sao). Đây là cách nhanh nhất để biết vì sao một bean "tự nhiên có" hoặc "tự nhiên không có".
+
+📖 [Viết auto-configuration](https://docs.spring.io/spring-boot/reference/features/developing-auto-configuration.html)
 </details>
 
 **SP16. ⭐ Cấu hình theo môi trường (dev, stg, prod) làm thế nào? Thứ tự ưu tiên ra sao?**
 <details><summary>Gợi ý</summary>
 
-`application-{profile}.yml` + `spring.profiles.active=prod`. Ưu tiên từ cao xuống: tham số dòng lệnh → biến môi trường → file profile → `application.yml`. Mật khẩu không để trong file commit lên git: dùng biến môi trường, hoặc Vault, hoặc mã hoá (Jasypt hay gặp ở dự án Hàn). Gom cấu hình bằng `@ConfigurationProperties` (xem `B5`).
+```yaml
+# application.yml: phần dùng chung
+mybatis:
+  mapper-locations: classpath:mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true      # cột order_no ↔ field orderNo
+
+# application-dev.yml
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@localhost:1521/XEPDB1
+    username: dev
+    password: dev
+
+# application-prod.yml: không ghi mật khẩu thật vào file
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+```
+Chạy: `java -jar app.jar --spring.profiles.active=prod`, hoặc đặt biến môi trường `SPRING_PROFILES_ACTIVE=prod`.
+
+Ưu tiên từ cao xuống (cái trên ghi đè cái dưới): tham số dòng lệnh → biến môi trường → `application-{profile}.yml` → `application.yml`. Vì vậy trên server chỉ cần đặt biến môi trường `SPRING_DATASOURCE_PASSWORD` là ghi đè được giá trị trong file.
+
+📖 [Externalized configuration](https://docs.spring.io/spring-boot/reference/features/external-config.html) (có danh sách đủ thứ tự ưu tiên) · [Profiles](https://docs.spring.io/spring-boot/reference/features/profiles.html)
 </details>
 
 **SP17. ⭐⭐ Actuator dùng làm gì? Có rủi ro gì?**
 <details><summary>Gợi ý</summary>
 
-`/actuator/health` (load balancer kiểm tra app còn sống không, có cả health của DB), `/metrics`, `/info`, `/loggers` (đổi log level lúc đang chạy). Rủi ro: mở `/env`, `/heapdump` ra ngoài là lộ mật khẩu và dữ liệu. Chỉ mở những endpoint cần, để sau xác thực hoặc mạng nội bộ.
+```yaml
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics      # chỉ mở những gì cần
+  endpoint:
+    health:
+      show-details: when-authorized       # chi tiết (trạng thái DB...) chỉ cho người đã đăng nhập
+```
+Gọi `GET /actuator/health` trả `{"status":"UP"}`. Load balancer dùng nó để biết server nào còn sống. Health tự kiểm cả kết nối Oracle.
+
+Rủi ro: `include: "*"` sẽ mở `/actuator/env` (lộ cấu hình), `/actuator/heapdump` (tải về được cả bộ nhớ, trong đó có mật khẩu và dữ liệu khách).
+
+📖 [Actuator endpoints](https://docs.spring.io/spring-boot/reference/actuator/endpoints.html)
 </details>
 
 **SP18. ⭐⭐ Log trong Spring Boot: SLF4J, Logback, MDC.**
 <details><summary>Gợi ý</summary>
 
-Code gọi SLF4J (interface), Logback là cài đặt mặc định. Viết `log.info("order {}", id)` (có placeholder) chứ không cộng chuỗi. MDC: gắn `requestId` (lấy từ header app Android gửi lên, hoặc tự sinh) vào mọi dòng log của một request bằng một filter, nhờ đó tra được toàn bộ log của một lần xác nhận huỷ. Không log mật khẩu, số thẻ, số điện thoại của khách.
+```java
+log.info("Cancel confirmed: order=" + orderId);   // SAI: cộng chuỗi kể cả khi level INFO đang tắt
+log.info("Cancel confirmed: order={}", orderId);  // ĐÚNG: placeholder
+log.error("Refund failed: order={}", orderId, e); // exception để cuối cùng thì in được stack trace
+```
+
+**MDC:** gắn một mã cho mỗi request để lọc được toàn bộ log của một lần xác nhận huỷ:
+```java
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+public class RequestIdFilter extends OncePerRequestFilter {
+    @Override
+    protected void doFilterInternal(HttpServletRequest req, HttpServletResponse res, FilterChain chain)
+            throws ServletException, IOException {
+        String id = Optional.ofNullable(req.getHeader("X-Request-Id"))      // app Android gửi lên
+                .orElse(UUID.randomUUID().toString());
+        MDC.put("requestId", id);
+        try {
+            chain.doFilter(req, res);
+        } finally {
+            MDC.remove("requestId");   // thread được dùng lại cho request khác (xem J26)
+        }
+    }
+}
+```
+```yaml
+logging:
+  pattern:
+    level: "%5p [%X{requestId}]"     # mọi dòng log có thêm [requestId]
+```
+
+📖 [Logging](https://docs.spring.io/spring-boot/reference/features/logging.html)
 </details>
 
 ---
@@ -345,88 +806,410 @@ Code gọi SLF4J (interface), Logback là cài đặt mặc định. Viết `log
 **SP19. ⭐ Một request đi qua Spring MVC thế nào (`DispatcherServlet`)?**
 <details><summary>Gợi ý</summary>
 
-Filter → `DispatcherServlet` → `HandlerMapping` (tìm controller method theo URL) → interceptor `preHandle` → `HandlerAdapter` gọi method (bind tham số, chạy validate) → kết quả trả về được `HttpMessageConverter` (Jackson) đổi thành JSON → `postHandle` → `afterCompletion`. Có exception thì `@ExceptionHandler`/`@ControllerAdvice` xử lý. Filter khác interceptor: xem `B3`.
+```
+App Android
+   │  POST /api/orders/123/cancel-confirmation
+   ▼
+Filter (RequestIdFilter, Spring Security...)       ← tầng Servlet
+   ▼
+DispatcherServlet
+   ├─ HandlerMapping: URL này → CancelController.confirm()
+   ├─ Interceptor.preHandle()                       ← tầng Spring MVC
+   ├─ HandlerAdapter: đổi JSON → DTO (Jackson), chạy @Valid, gọi method
+   ├─ Kết quả trả về → HttpMessageConverter → JSON
+   ├─ Interceptor.postHandle()
+   └─ Interceptor.afterCompletion()
+   (Có exception thì @ExceptionHandler / @RestControllerAdvice xử lý)
+```
+
+Ví dụ interceptor đo thời gian theo từng controller method:
+```java
+public class TimingInterceptor implements HandlerInterceptor {
+    @Override
+    public boolean preHandle(HttpServletRequest req, HttpServletResponse res, Object handler) {
+        req.setAttribute("start", System.currentTimeMillis());
+        return true;                     // false thì dừng, không gọi controller
+    }
+    @Override
+    public void afterCompletion(HttpServletRequest req, HttpServletResponse res, Object handler, Exception ex) {
+        long ms = System.currentTimeMillis() - (long) req.getAttribute("start");
+        log.info("{} {} -> {} ({} ms)", req.getMethod(), req.getRequestURI(), res.getStatus(), ms);
+    }
+}
+
+@Configuration
+public class WebMvcConfig implements WebMvcConfigurer {
+    @Override
+    public void addInterceptors(InterceptorRegistry registry) {
+        registry.addInterceptor(new TimingInterceptor()).addPathPatterns("/api/**");
+    }
+}
+```
+
+📖 [DispatcherServlet](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-servlet.html) · [Interceptors](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-servlet/handlermapping-interceptor.html)
 </details>
 
 **SP20. ⭐ `@Controller` khác `@RestController`? `@RequestParam`, `@PathVariable`, `@RequestBody` khác nhau thế nào?**
 <details><summary>Gợi ý</summary>
 
-`@RestController` = `@Controller` + `@ResponseBody` (trả dữ liệu, không trả view). `@PathVariable`: một phần của URL (`/orders/{id}`). `@RequestParam`: query string (`?status=CANCEL`). `@RequestBody`: body JSON đổi thành object. `ResponseEntity` để tự chọn status code và header.
+```java
+@RestController                         // = @Controller + @ResponseBody: trả dữ liệu (JSON), không trả trang HTML
+@RequestMapping("/api/orders")
+@RequiredArgsConstructor
+public class CancelController {
+    private final CancelService cancelService;
+
+    // GET /api/orders/cancel-requests?storeCode=S001&page=0
+    @GetMapping("/cancel-requests")
+    public PageResponse<CancelRequestDto> list(
+            @RequestParam String storeCode,                      // ?storeCode=...
+            @RequestParam(defaultValue = "0") int page) { ... }
+
+    // POST /api/orders/123/cancel-confirmation   body: {"reason":"..."}
+    @PostMapping("/{orderId}/cancel-confirmation")
+    public ResponseEntity<CancelResult> confirm(
+            @PathVariable long orderId,                          // một phần của URL
+            @Valid @RequestBody CancelConfirmRequest body) {     // body JSON → object
+        return ResponseEntity.ok(cancelService.confirm(orderId, body));
+    }
+}
+```
+
+📖 [Tham số của handler method](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods.html)
 </details>
 
 **SP21. ⭐ Chọn HTTP method và status code thế nào? API xác nhận huỷ nên trả gì?**
 <details><summary>Gợi ý</summary>
 
-`GET` (chỉ đọc), `POST` (tạo mới hoặc hành động), `PUT` (thay toàn bộ, idempotent), `PATCH` (sửa một phần), `DELETE`. Status: 200, 201 (đã tạo), 204, 400 (dữ liệu sai), 401 (chưa đăng nhập), 403 (không có quyền), 404, **409 (xung đột trạng thái: đơn đã được xác nhận hoặc đã bị huỷ)**, 500. Xác nhận huỷ: `POST /orders/{id}/cancel-confirmation`. Thành công trả 200; đơn đã xác nhận rồi thì trả 200 kèm trạng thái hiện tại (idempotent, `Q3`) hoặc 409, miễn là thống nhất với app Android.
+| Tình huống | Status |
+|---|---|
+| Xác nhận thành công | `200 OK` (kèm trạng thái mới) |
+| Tạo yêu cầu huỷ mới | `201 Created` |
+| Body thiếu field, sai định dạng | `400 Bad Request` |
+| Chưa đăng nhập, token hết hạn | `401 Unauthorized` |
+| Đăng nhập rồi nhưng không có quyền xác nhận | `403 Forbidden` |
+| Không có đơn này | `404 Not Found` |
+| Đơn đã xác nhận rồi, hoặc không ở trạng thái chờ huỷ | `409 Conflict` |
+| Lỗi không lường trước | `500 Internal Server Error` |
+
+```java
+// Trong service
+int updated = orderMapper.confirmCancel(orderId, userId);   // UPDATE ... WHERE status = 'CANCEL_REQUESTED'
+if (updated == 0) {
+    throw new BusinessException(ErrorCode.INVALID_ORDER_STATUS);   // advice đổi thành 409 (xem SP22)
+}
+```
+Bấm hai lần do mạng chậm: trả `200` kèm "đã xác nhận" (idempotent, `Q3`) hay trả `409` đều được, miễn là thống nhất với app Android và ghi trong tài liệu API.
+
+📖 [MDN: HTTP response status codes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Status)
 </details>
 
 **SP22. ⭐ Xử lý lỗi tập trung thế nào? Trả lỗi cho app Android ra sao?**
 <details><summary>Gợi ý</summary>
 
-`@RestControllerAdvice` + `@ExceptionHandler` cho từng loại exception (business exception có mã lỗi riêng, lỗi validate, lỗi không lường trước). Body thống nhất: `{"code": "ORDER_ALREADY_CANCELLED", "message": "..."}`. App hiển thị theo `code`, không theo `message`. Lỗi 500 không được trả stack trace ra ngoài. Ví dụ có sẵn: `ApiExceptionHandler` (`B7`).
+```java
+@Getter
+@RequiredArgsConstructor
+public enum ErrorCode {
+    ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Không tìm thấy đơn hàng"),
+    INVALID_ORDER_STATUS(HttpStatus.CONFLICT, "Đơn không ở trạng thái chờ huỷ"),
+    NO_PERMISSION(HttpStatus.FORBIDDEN, "Không có quyền xác nhận huỷ");
+
+    private final HttpStatus status;
+    private final String message;
+}
+
+@Getter
+public class BusinessException extends RuntimeException {   // unchecked: transaction rollback (Q4)
+    private final ErrorCode code;
+    public BusinessException(ErrorCode code) { super(code.getMessage()); this.code = code; }
+}
+
+public record ErrorResponse(String code, String message) {}
+
+@RestControllerAdvice
+@Slf4j
+public class GlobalExceptionHandler {
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<ErrorResponse> business(BusinessException e) {
+        return ResponseEntity.status(e.getCode().getStatus())
+                .body(new ErrorResponse(e.getCode().name(), e.getMessage()));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<ErrorResponse> invalid(MethodArgumentNotValidException e) {
+        String msg = e.getBindingResult().getFieldErrors().stream()
+                .map(f -> f.getField() + ": " + f.getDefaultMessage())
+                .findFirst().orElse("invalid request");
+        return ResponseEntity.badRequest().body(new ErrorResponse("INVALID_REQUEST", msg));
+    }
+
+    @ExceptionHandler(Exception.class)          // lưới cuối cùng
+    public ResponseEntity<ErrorResponse> unknown(Exception e) {
+        log.error("Unhandled error", e);        // stack trace chỉ nằm trong log
+        return ResponseEntity.internalServerError()
+                .body(new ErrorResponse("INTERNAL_ERROR", "Có lỗi xảy ra, vui lòng thử lại"));
+    }
+}
+```
+App Android nhận `{"code": "INVALID_ORDER_STATUS", "message": "..."}` và hiển thị theo `code`.
+
+📖 [`@ExceptionHandler`](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-exceptionhandler.html)
 </details>
 
 **SP23. ⭐ Validate input: `@Valid` khác `@Validated` thế nào?**
 <details><summary>Gợi ý</summary>
 
-`@Valid` (chuẩn Jakarta/Javax): kích hoạt validate cho `@RequestBody` và đi vào các object lồng bên trong. `@Validated` (của Spring): hỗ trợ **validation group** (luật cho tạo mới khác luật cho cập nhật) và validate tham số method khi đặt trên class (`@Min` trên `@RequestParam`). Annotation hay dùng: `@NotNull`, `@NotBlank`, `@Size`, `@Pattern`, `@Positive`. Xem `B8`.
+```java
+public class CancelConfirmRequest {
+    @NotBlank @Size(max = 200)
+    private String reason;
+
+    @NotNull @Positive
+    private Integer quantity;
+
+    @Valid                          // không có dòng này thì các item bên trong KHÔNG được kiểm
+    @NotEmpty
+    private List<CancelItem> items;
+}
+```
+`@Valid` (chuẩn Jakarta, Boot 2 là `javax.validation`): kiểm `@RequestBody` và đi vào các object lồng bên trong.
+
+`@Validated` (của Spring) làm được thêm hai việc:
+```java
+// 1. Kiểm tham số đơn lẻ: phải đặt @Validated trên class
+@RestController
+@Validated
+public class CancelController {
+    @GetMapping("/cancel-requests")
+    public List<CancelRequestDto> list(@RequestParam @Min(0) int page,
+                                       @RequestParam @Max(100) int size) { ... }
+}
+
+// 2. Validation group: luật cho tạo mới khác luật cho cập nhật
+public interface OnCreate {}
+public interface OnUpdate {}
+
+public class StoreDto {
+    @Null(groups = OnCreate.class) @NotNull(groups = OnUpdate.class)
+    private Long id;
+}
+
+@PostMapping public void create(@Validated(OnCreate.class) @RequestBody StoreDto dto) { ... }
+@PutMapping  public void update(@Validated(OnUpdate.class) @RequestBody StoreDto dto) { ... }
+```
+
+📖 [Validation trong Spring MVC](https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-validation.html) · [Bean Validation](https://docs.spring.io/spring-framework/reference/core/validation/beanvalidation.html)
 </details>
 
 **SP24. ⭐⭐ Thay đổi API mà không làm hỏng app Android bản cũ thế nào?**
 <details><summary>Gợi ý</summary>
 
-Chỉ **thêm** field, không đổi tên hay xoá field. Spring Boot cấu hình Jackson mặc định bỏ qua field lạ (`FAIL_ON_UNKNOWN_PROPERTIES = false`), nên phía server nhận thêm field không bị lỗi; phía app cũng nên bỏ qua field lạ. Cần đổi lớn thì làm version mới (`/v2/...`) và giữ bản cũ tới khi phần lớn người dùng đã cập nhật app. Xem `Q23`.
+```java
+// v1: app cũ đang gửi
+public class CancelConfirmRequest {
+    private String reason;
+}
+
+// Thêm field mới: KHÔNG bắt buộc, app cũ không gửi vẫn chạy
+public class CancelConfirmRequest {
+    private String reason;
+    private String reasonCode;      // có thể null; service tự xử lý khi null
+}
+
+// Response: chỉ thêm field. App cũ gặp field lạ thì bỏ qua
+// (Spring Boot mặc định cấu hình Jackson với FAIL_ON_UNKNOWN_PROPERTIES = false;
+//  phía Android dùng Gson thì mặc định cũng bỏ qua field lạ).
+```
+Những việc **không được làm** với API đang có app dùng: đổi tên field, đổi kiểu (`"qty": "1"` sang `"qty": 1`), xoá field, biến field không bắt buộc thành bắt buộc. Cần đổi lớn thì làm `/api/v2/...` và giữ v1 cho tới khi phần lớn người dùng đã cập nhật app.
+
+📖 [Spring Boot: cấu hình Jackson](https://docs.spring.io/spring-boot/reference/web/servlet.html)
 </details>
 
 **SP25. ⭐⭐ Phân trang API danh sách đơn thế nào?**
 <details><summary>Gợi ý</summary>
 
-Nhận `page`, `size` (giới hạn `size` tối đa, ví dụ 100), trả `items` + `totalCount` (hoặc `hasNext`). Phía DB: `OFFSET/FETCH` hoặc `ROWNUM` (xem `Q19`). App cuộn vô hạn hoặc dữ liệu lớn thì dùng cursor/keyset (`?lastId=...`), vì `COUNT(*)` trên bảng lớn cũng tốn.
+```java
+public record PageResponse<T>(List<T> items, int page, int size, long totalCount) {}
+
+@GetMapping("/cancel-requests")
+public PageResponse<CancelRequestDto> list(@RequestParam String storeCode,
+                                           @RequestParam(defaultValue = "0") int page,
+                                           @RequestParam(defaultValue = "20") int size) {
+    size = Math.min(size, 100);                      // chặn app xin 1 triệu dòng
+    int offset = page * size;
+    List<CancelRequestDto> items = cancelMapper.findRequests(storeCode, offset, size);
+    long total = cancelMapper.countRequests(storeCode);
+    return new PageResponse<>(items, page, size, total);
+}
+```
+```xml
+<select id="findRequests" resultType="CancelRequestDto">
+  SELECT order_id, order_no, requested_at, reason
+  FROM cancel_requests
+  WHERE store_code = #{storeCode}
+  ORDER BY requested_at DESC, order_id DESC   <!-- thêm cột duy nhất để thứ tự không đổi giữa các trang -->
+  OFFSET #{offset} ROWS FETCH NEXT #{size} ROWS ONLY   <!-- Oracle 12c+, bản cũ dùng ROWNUM (Q19) -->
+</select>
+```
+App cuộn vô hạn thì không cần `totalCount` (bớt được một câu `COUNT(*)`), trả `hasNext` là đủ.
 </details>
 
 **SP26. ⭐⭐ Upload file (ảnh chứng từ huỷ chẳng hạn) cần chú ý gì?**
 <details><summary>Gợi ý</summary>
 
-`MultipartFile`, giới hạn dung lượng (`spring.servlet.multipart.max-file-size`, `max-request-size`), kiểm tra loại file theo nội dung chứ không chỉ theo đuôi, đặt lại tên file (không dùng tên người dùng gửi để tránh path traversal `../`), lưu ra storage riêng (S3, NAS) chứ không lưu trong DB hay trong thư mục của app.
+```yaml
+spring:
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 10MB
+```
+```java
+@PostMapping(value = "/{orderId}/cancel-evidence", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+public void upload(@PathVariable long orderId, @RequestParam("file") MultipartFile file) throws IOException {
+    String type = file.getContentType();          // app gửi lên, không tin hoàn toàn
+    if (!List.of("image/jpeg", "image/png").contains(type)) {
+        throw new BusinessException(ErrorCode.INVALID_FILE);
+    }
+    String key = "cancel/" + orderId + "/" + UUID.randomUUID() + ".jpg";   // không dùng file.getOriginalFilename()
+    storage.save(key, file.getInputStream());     // S3, NAS..., không lưu vào DB hay thư mục của app
+}
+```
+Tên file gốc có thể là `../../etc/passwd` (path traversal), nên luôn tự đặt tên.
+
+📖 [Spring Boot: multipart](https://docs.spring.io/spring-boot/reference/web/servlet.html)
 </details>
 
 ---
 
 ## 9. Transaction (Spring)
 
-Phần cơ bản đã có ở `Q4` (MyBatis), `C2`, `C4`, `C6`. Thêm các câu hay bị đào sâu:
+Phần cơ bản đã có ở `Q4` (MyBatis), `C2`, `C4`, `C6`. Các câu sau đào sâu hơn.
 
 **SP27. ⭐ Các loại propagation, và ví dụ dùng từng loại.**
 <details><summary>Gợi ý</summary>
 
-- `REQUIRED` (mặc định): có transaction thì dùng chung, không có thì tạo mới.
-- `REQUIRES_NEW`: luôn tạo transaction mới, tạm dừng cái đang có. Ví dụ: ghi log lỗi hoặc lịch sử thao tác phải được lưu dù transaction chính rollback.
-- `NESTED`: savepoint bên trong transaction đang có; phần con rollback được mà phần cha không bị ảnh hưởng. Chạy được với `DataSourceTransactionManager` (MyBatis/JDBC), JPA thì không.
-- `SUPPORTS`, `MANDATORY`, `NOT_SUPPORTED`, `NEVER`: ít dùng, biết tên là đủ.
+```java
+@Service
+@RequiredArgsConstructor
+public class CancelService {
+    private final OrderMapper orderMapper;
+    private final AuditService auditService;     // bean KHÁC (xem SP12)
+
+    @Transactional                                // REQUIRED (mặc định)
+    public void confirm(long orderId, String userId) {
+        auditService.log(orderId, userId, "CONFIRM_TRY");   // REQUIRES_NEW: commit ngay, riêng
+        orderMapper.confirmCancel(orderId, userId);
+        stockMapper.restore(orderId);             // lỗi ở đây: rollback confirmCancel,
+                                                  // nhưng dòng audit VẪN CÒN
+    }
+}
+
+@Service
+public class AuditService {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void log(long orderId, String userId, String action) {
+        auditMapper.insert(orderId, userId, action);
+    }
+}
+```
+
+| Propagation | Ý nghĩa | Ví dụ |
+|---|---|---|
+| `REQUIRED` | Có thì dùng chung, chưa có thì tạo mới | Hầu hết method service |
+| `REQUIRES_NEW` | Luôn tạo mới, tạm dừng cái đang có | Audit log, lịch sử thao tác phải lưu dù nghiệp vụ lỗi |
+| `NESTED` | Savepoint trong transaction đang có | Huỷ từng món trong đơn, món nào lỗi thì chỉ bỏ món đó |
+| `SUPPORTS`, `MANDATORY`, `NOT_SUPPORTED`, `NEVER` | Ít dùng | Biết tên là đủ |
+
+Lưu ý: `REQUIRES_NEW` lấy thêm **một connection nữa** từ pool trong lúc connection cũ vẫn bị giữ. Dùng nhiều dưới tải cao có thể làm cạn pool (SP36). `NESTED` chạy được với `DataSourceTransactionManager` (MyBatis/JDBC), JPA thì không.
+
+📖 [Transaction propagation](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/tx-propagation.html) · [MyBatis-Spring: transactions](https://mybatis.org/spring/transactions.html)
 </details>
 
 **SP28. ⭐⭐ Lỗi `UnexpectedRollbackException: Transaction silently rolled back because it has been marked as rollback-only` là gì?**
 <details><summary>Gợi ý</summary>
 
-Method ngoài (`REQUIRED`) gọi method trong (`REQUIRED`, dùng chung transaction). Method trong ném `RuntimeException`, nên transaction bị **đánh dấu rollback-only**. Method ngoài `catch` lỗi rồi chạy tiếp, tưởng sẽ commit được, nhưng tới lúc commit thì Spring ném lỗi này. Sửa: đừng nuốt lỗi; nếu phần trong được phép thất bại riêng thì cho nó `REQUIRES_NEW` hoặc `NESTED`.
+```java
+@Service
+public class CancelService {
+    @Transactional
+    public void confirmAll(List<Long> ids) {
+        for (long id : ids) {
+            try {
+                cancelWorker.confirmOne(id);      // bean khác, cũng @Transactional (REQUIRED)
+            } catch (BusinessException e) {
+                log.warn("skip order {}", id);    // tưởng là bỏ qua đơn lỗi, làm tiếp đơn khác
+            }
+        }
+    }   // ← tới đây commit thì ném UnexpectedRollbackException, KHÔNG đơn nào được lưu
+}
+```
+Vì sao: `confirmOne` dùng **chung** transaction với `confirmAll`. Khi nó ném `RuntimeException`, Spring đánh dấu cả transaction là "chỉ được rollback". `confirmAll` bắt lỗi rồi chạy tiếp, nhưng tới lúc commit thì Spring phát hiện và rollback hết.
+
+Sửa, tuỳ nghiệp vụ muốn gì:
+- Muốn mỗi đơn độc lập (đơn lỗi thì bỏ, đơn khác vẫn lưu): cho `confirmOne` dùng `REQUIRES_NEW`, hoặc bỏ `@Transactional` ở `confirmAll`.
+- Muốn tất cả hoặc không gì cả: đừng `catch`, cho lỗi bay lên.
+
+📖 [Rolling back](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/rolling-back.html) · [Propagation: phần "rollback-only"](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/tx-propagation.html)
 </details>
 
 **SP29. ⭐⭐ Isolation level: Spring khai báo thế nào? Oracle hỗ trợ những mức nào?**
 <details><summary>Gợi ý</summary>
 
-`@Transactional(isolation = Isolation.READ_COMMITTED)`. Các hiện tượng: dirty read, non-repeatable read, phantom read. Oracle chỉ có `READ COMMITTED` (mặc định) và `SERIALIZABLE` (cùng chế độ `READ ONLY`); không có dirty read. Thực tế hầu như để mặc định, xử lý tranh chấp bằng update có điều kiện hoặc `FOR UPDATE` (`Q2`).
+```java
+@Transactional(isolation = Isolation.READ_COMMITTED)   // mặc định của Oracle, thường không cần ghi
+```
+
+| Hiện tượng | Ví dụ |
+|---|---|
+| Dirty read | Đọc được dữ liệu người khác **chưa commit** (Oracle không bao giờ cho) |
+| Non-repeatable read | Trong một transaction, đọc lại cùng một dòng mà giá trị đã khác |
+| Phantom read | Đọc lại cùng một điều kiện mà có thêm hoặc mất dòng |
+
+Oracle chỉ có `READ COMMITTED` (mặc định) và `SERIALIZABLE`. Thực tế hầu như để mặc định, còn tranh chấp thì giải bằng update có điều kiện hoặc `SELECT ... FOR UPDATE` (`Q2`). Nói được câu này là đủ cho phần lớn buổi phỏng vấn.
+
+📖 [`@Transactional` settings](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/annotations.html)
 </details>
 
 **SP30. ⭐⭐ Transaction dài gây ra vấn đề gì? `timeout` dùng thế nào?**
 <details><summary>Gợi ý</summary>
 
-Giữ khoá dòng lâu (người khác phải chờ hoặc bị deadlock), giữ connection (pool cạn thì toàn bộ API treo), undo của Oracle lớn dần. Không gọi API ngoài, không gửi mail, không xử lý file trong transaction (`Q5`). `@Transactional(timeout = 5)` để chặn trên. Batch lớn thì chia commit theo lô.
+```java
+// SAI: gọi API thanh toán (có thể mất 10 giây) bên trong transaction
+@Transactional
+public void confirm(long orderId) {
+    orderMapper.lockForUpdate(orderId);          // SELECT ... FOR UPDATE: dòng bị khoá
+    paymentClient.refund(orderId);               // trong 10 giây này dòng bị khoá, connection bị giữ
+    orderMapper.confirmCancel(orderId);
+}
+
+// TỐT HƠN: transaction ngắn, gọi bên ngoài sau khi commit
+public void confirm(long orderId) {
+    cancelWorker.markRefunding(orderId);         // @Transactional: đổi trạng thái → REFUNDING, commit
+    RefundResult r = paymentClient.refund(orderId);   // không có transaction nào đang mở
+    cancelWorker.finish(orderId, r);             // @Transactional: CANCEL_CONFIRMED hoặc REFUND_FAILED
+}
+// Thêm một job đối soát quét các đơn kẹt ở REFUNDING quá lâu.
+```
+Đặt chặn trên: `@Transactional(timeout = 5)` (đơn vị là giây).
+
+📖 [`@Transactional` settings](https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/annotations.html)
 </details>
 
 **SP31. ⭐⭐⭐ `@Transactional` đặt ở controller, service hay mapper?**
 <details><summary>Gợi ý</summary>
 
-Ở **service**: đó là ranh giới của một nghiệp vụ (xác nhận huỷ = đổi trạng thái + hoàn tồn kho + ghi lịch sử). Ở controller thì transaction ôm cả việc chuyển JSON và các việc không liên quan; ở mapper thì mỗi câu SQL là một transaction riêng, mất tính nguyên tử. Đặt trên class thì áp cho mọi method `public`; đặt trên method thì ghi đè cấu hình của class.
+Ở **service**, vì đó là ranh giới của một nghiệp vụ:
+```java
+@Transactional          // xác nhận huỷ = 3 việc, phải cùng thành công hoặc cùng huỷ
+public void confirm(long orderId, String userId) {
+    orderMapper.confirmCancel(orderId, userId);
+    stockMapper.restore(orderId);
+    historyMapper.insert(orderId, userId, "CONFIRMED");
+}
+```
+Đặt ở controller: transaction ôm luôn việc đổi JSON, kiểm tra đầu vào, và những việc không liên quan. Không đặt gì cả (mỗi câu SQL tự commit): dòng thứ 2 lỗi thì dòng thứ 1 đã commit rồi, dữ liệu lệch. Đặt trên class thì áp cho mọi method `public`; đặt trên method thì ghi đè cấu hình của class. Method chỉ đọc thì thêm `readOnly = true` (`C6`).
 </details>
 
 ---
@@ -436,25 +1219,106 @@ Giữ khoá dòng lâu (người khác phải chờ hoặc bị deadlock), giữ
 **SP32. ⭐ Authentication khác authorization thế nào? Spring Security chạy ở đâu trong request?**
 <details><summary>Gợi ý</summary>
 
-Authentication: bạn là ai (đăng nhập). Authorization: bạn được làm gì (vai trò, quyền). Spring Security là một **chuỗi filter** (`FilterChainProxy`, nằm trong servlet filter chain qua `DelegatingFilterProxy`), chạy trước `DispatcherServlet`. Kết quả xác thực nằm trong `SecurityContextHolder` (dùng `ThreadLocal`, xem `J26`).
+Authentication: bạn là ai (đăng nhập). Authorization: bạn được làm gì (vai trò, quyền).
+
+```
+Request ─> DelegatingFilterProxy ─> FilterChainProxy ─> [các filter của Security] ─> DispatcherServlet
+                                                          ├─ đọc token / session
+                                                          ├─ xác thực → SecurityContextHolder
+                                                          └─ kiểm quyền theo URL
+```
+Cấu hình kiểu mới (Spring Security 5.7 trở lên, Boot 2.7 trở lên):
+```java
+@Configuration
+@EnableWebSecurity
+public class SecurityConfig {
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http
+            .csrf().disable()                                   // API stateless (SP34)
+            .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+            .and()
+            .authorizeHttpRequests(auth -> auth
+                .antMatchers("/actuator/health", "/api/auth/login").permitAll()   // Security 6: requestMatchers
+                .antMatchers("/api/orders/*/cancel-confirmation").hasRole("STORE_MANAGER")
+                .anyRequest().authenticated())
+            .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+}
+```
+Lấy người đang đăng nhập trong controller: `@AuthenticationPrincipal UserDetails user`.
+
+📖 [Kiến trúc Spring Security (servlet)](https://docs.spring.io/spring-security/reference/servlet/architecture.html) · [Phân quyền theo URL](https://docs.spring.io/spring-security/reference/servlet/authorization/authorize-http-requests.html)
 </details>
 
 **SP33. ⭐⭐ API cho app di động: session hay JWT? Ưu nhược điểm?**
 <details><summary>Gợi ý</summary>
 
-Session: state nằm ở server, thu hồi dễ, nhưng nhiều server thì phải chia sẻ session (Redis). JWT: stateless, server nào cũng tự kiểm được bằng chữ ký, nhưng **khó thu hồi** trước khi hết hạn, nên access token để ngắn hạn + có refresh token. Trong JWT không bỏ dữ liệu nhạy cảm (chỉ được mã hoá base64, ai cũng đọc được). Ở dự án dùng `___`.
+```
+1. App: POST /api/auth/login {id, password}
+2. Server: kiểm mật khẩu → trả accessToken (sống 30 phút) + refreshToken (sống 14 ngày)
+3. App: mọi request gửi header  Authorization: Bearer <accessToken>
+4. Server (jwtFilter): kiểm chữ ký + hạn → đặt user vào SecurityContextHolder
+5. accessToken hết hạn → app gọi POST /api/auth/refresh với refreshToken → nhận token mới
+```
+
+| | Session | JWT |
+|---|---|---|
+| State | Nằm ở server | Nằm trong token (stateless) |
+| Nhiều server | Phải chia sẻ session (Redis) | Server nào cũng tự kiểm được |
+| Thu hồi ngay (khoá tài khoản) | Dễ: xoá session | Khó: phải chờ hết hạn, hoặc giữ danh sách đen |
+
+JWT chỉ **ký**, không mã hoá: nội dung chỉ là base64, ai cũng đọc được (thử dán vào jwt.io). Không bỏ dữ liệu nhạy cảm vào. Ở dự án dùng `___`.
 </details>
 
 **SP34. ⭐⭐ Lưu mật khẩu thế nào? Vì sao API cho app di động thường tắt CSRF?**
 <details><summary>Gợi ý</summary>
 
-Mật khẩu: hash bằng `BCryptPasswordEncoder` (có salt, cố tình chậm), không dùng MD5 hay SHA-256 trần, không bao giờ mã hoá hai chiều. CSRF là kiểu tấn công lợi dụng việc **browser tự gửi cookie**; API stateless nhận token qua header `Authorization` thì không bị, nên tắt được. Còn dùng cookie session thì phải bật.
+```java
+@Bean
+public PasswordEncoder passwordEncoder() {
+    return new BCryptPasswordEncoder();
+}
+
+String hash = encoder.encode("raw-password");        // $2a$10$... mỗi lần ra một chuỗi khác (có salt)
+boolean ok = encoder.matches("raw-password", hash);  // so bằng matches, không encode rồi so chuỗi
+```
+Không dùng MD5, SHA-256 trần (quá nhanh, dễ dò), không mã hoá hai chiều.
+
+CSRF: trang web xấu lừa browser gửi request tới server của mình, và **browser tự đính kèm cookie** đăng nhập. App Android gửi token qua header `Authorization` (app tự gắn, không có gì tự đính kèm), nên không bị kiểu tấn công này, tắt CSRF được. Còn nếu đăng nhập bằng cookie session (web admin chẳng hạn) thì phải bật.
+
+📖 [Password storage](https://docs.spring.io/spring-security/reference/features/authentication/password-storage.html) · [CSRF: khi nào cần](https://docs.spring.io/spring-security/reference/servlet/exploits/csrf.html)
 </details>
 
 **SP35. ⭐⭐ Phân quyền "chỉ quản lý cửa hàng mới được xác nhận huỷ" làm thế nào?**
 <details><summary>Gợi ý</summary>
 
-Theo URL trong `SecurityFilterChain` (`.antMatchers("/orders/*/cancel-confirmation").hasRole("STORE_MANAGER")`; Spring Security 5.8 trở lên đổi tên thành `requestMatchers`), hoặc theo method với `@PreAuthorize("hasRole('STORE_MANAGER')")` (cần `@EnableMethodSecurity`; bản cũ là `@EnableGlobalMethodSecurity`). Còn phải kiểm thêm **theo dữ liệu**: quản lý cửa hàng A không được xác nhận đơn của cửa hàng B. Việc này nằm ở service hoặc ngay trong câu SQL (`WHERE store_code = #{myStore}`).
+Có hai lớp, **cần cả hai**:
+```java
+// Lớp 1: theo vai trò (người này có được làm việc này không?)
+@Configuration
+@EnableMethodSecurity            // Security 5.5 trở về trước: @EnableGlobalMethodSecurity(prePostEnabled = true)
+public class MethodSecurityConfig {}
+
+@PreAuthorize("hasRole('STORE_MANAGER')")
+public void confirm(long orderId, LoginUser user) { ... }
+
+// Lớp 2: theo dữ liệu (đơn này có thuộc cửa hàng của người này không?)
+// Quản lý cửa hàng A có role STORE_MANAGER, nhưng không được xác nhận đơn của cửa hàng B.
+```
+```xml
+<update id="confirmCancel">
+  UPDATE orders
+  SET status = 'CANCEL_CONFIRMED', confirmed_by = #{userId}, confirmed_at = SYSDATE
+  WHERE order_id = #{orderId}
+    AND status = 'CANCEL_REQUESTED'
+    AND store_code = #{storeCode}       <!-- lấy từ thông tin đăng nhập, KHÔNG lấy từ request -->
+</update>
+```
+Thiếu lớp 2 là lỗi bảo mật kiểu IDOR: chỉ cần đổi `orderId` trên URL là thao tác được đơn của cửa hàng khác.
+
+📖 [Method security](https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html)
 </details>
 
 ---
@@ -464,35 +1328,136 @@ Theo URL trong `SecurityFilterChain` (`.antMatchers("/orders/*/cancel-confirmati
 **SP36. ⭐⭐ Connection pool (HikariCP): vì sao cần, cấu hình gì, lỗi nào hay gặp?**
 <details><summary>Gợi ý</summary>
 
-Mở connection tới Oracle rất tốn, nên giữ sẵn một nhóm để dùng lại. HikariCP là mặc định từ Spring Boot 2, `maximum-pool-size` mặc định 10. Lỗi hay gặp: `Connection is not available, request timed out after 30000ms` khi pool cạn, do transaction dài, query chậm, hoặc connection bị rò (lấy ra mà không trả lại). Bật `leak-detection-threshold` để log chỗ code giữ connection quá lâu. Pool to hơn chưa chắc đã nhanh hơn.
+```yaml
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 10            # mặc định 10
+      minimum-idle: 10
+      connection-timeout: 3000         # chờ lấy connection tối đa 3s (mặc định 30s)
+      max-lifetime: 1800000            # 30 phút, nên ngắn hơn timeout của DB/firewall
+      leak-detection-threshold: 20000  # connection bị giữ quá 20s thì log ra stack trace chỗ giữ
+```
+Lỗi hay gặp khi pool cạn:
+```
+HikariPool-1 - Connection is not available, request timed out after 30000ms.
+```
+Nguyên nhân thường gặp: transaction dài (SP30), query chậm, gọi API ngoài trong transaction, dùng `REQUIRES_NEW` lồng nhau (SP27), hoặc code tự lấy connection mà không trả lại. Tăng `maximum-pool-size` thường **không** giải quyết được, có khi còn làm DB chậm hơn.
+
+📖 [Spring Boot: DataSource và pool](https://docs.spring.io/spring-boot/reference/data/sql.html) · [HikariCP: About Pool Sizing](https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing)
 </details>
 
 **SP37. ⭐⭐ `@Async` dùng thế nào? Có những bẫy gì?**
 <details><summary>Gợi ý</summary>
 
-Cần `@EnableAsync`. Bẫy: gọi trong cùng class thì không async (`SP12`); không cấu hình executor thì dùng pool mặc định (Boot 2.1 trở lên tự tạo `ThreadPoolTaskExecutor` có hàng đợi vô hạn); method `void` ném exception thì exception bị mất (cần `AsyncUncaughtExceptionHandler`); không có transaction và không có `SecurityContext` của request gốc. Trả `CompletableFuture<T>` nếu cần lấy kết quả.
+```java
+@Configuration
+@EnableAsync
+public class AsyncConfig {
+    @Bean(name = "notificationExecutor")
+    public Executor notificationExecutor() {
+        ThreadPoolTaskExecutor ex = new ThreadPoolTaskExecutor();
+        ex.setCorePoolSize(4);
+        ex.setMaxPoolSize(8);
+        ex.setQueueCapacity(500);                       // có giới hạn (xem J22)
+        ex.setThreadNamePrefix("notify-");              // nhìn log biết ngay thread nào
+        ex.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        ex.initialize();
+        return ex;
+    }
+}
+
+@Service
+public class NotificationService {
+    @Async("notificationExecutor")
+    public void sendCancelPush(long orderId) { ... }    // gọi xong trả về ngay, chạy ở thread khác
+
+    @Async("notificationExecutor")
+    public CompletableFuture<Boolean> sendSms(String phone) { ... }   // cần kết quả thì trả CompletableFuture
+}
+```
+Bẫy: gọi trong cùng class thì không async (SP12); method `void` ném exception thì exception **mất** (không ai bắt, cần `AsyncUncaughtExceptionHandler`); thread mới không có transaction, không có `SecurityContext`, không có MDC của request gốc.
+
+📖 [Spring Boot: task execution](https://docs.spring.io/spring-boot/reference/features/task-execution-and-scheduling.html) · [`@Async`](https://docs.spring.io/spring-framework/reference/integration/scheduling.html)
 </details>
 
 **SP38. ⭐⭐ `@Scheduled` cho batch (đối soát đơn huỷ cuối ngày chẳng hạn) có bẫy gì?**
 <details><summary>Gợi ý</summary>
 
-Mặc định tất cả job chạy trên **một thread duy nhất**: job này chậm thì job kia bị trễ (tăng `spring.task.scheduling.pool.size`). Chạy nhiều server thì **mỗi server đều chạy job** (chạy trùng): dùng ShedLock (khoá trong DB) hoặc chỉ bật job ở một server. Nhớ múi giờ: `@Scheduled(cron = "0 0 2 * * *", zone = "Asia/Seoul")`. `fixedRate` khác `fixedDelay`: tính từ lúc bắt đầu hay từ lúc chạy xong.
+```java
+@Configuration
+@EnableScheduling
+public class SchedulingConfig {}
+
+@Component
+public class CancelReconcileJob {
+    // 2 giờ sáng giờ Hàn Quốc. Cron của Spring có 6 trường: giây phút giờ ngày tháng thứ
+    @Scheduled(cron = "0 0 2 * * *", zone = "Asia/Seoul")
+    public void reconcile() { ... }
+
+    @Scheduled(fixedDelay = 60_000)   // chạy xong rồi nghỉ 60s mới chạy lại
+    public void retryFailedRefunds() { ... }
+    // fixedRate = 60_000: cứ 60s chạy một lần, tính từ lúc BẮT ĐẦU lần trước
+}
+```
+```yaml
+spring:
+  task:
+    scheduling:
+      pool:
+        size: 4       # mặc định 1: một job chạy lâu làm mọi job khác bị trễ
+```
+Chạy 2 server thì job chạy **trên cả 2**, đối soát hai lần. Dùng [ShedLock](https://github.com/lukas-krecan/ShedLock) để chỉ một server chạy:
+```java
+@Scheduled(cron = "0 0 2 * * *", zone = "Asia/Seoul")
+@SchedulerLock(name = "cancelReconcile", lockAtMostFor = "PT30M")   // khoá nằm trong một bảng của DB
+public void reconcile() { ... }
+```
+
+📖 [Scheduling](https://docs.spring.io/spring-framework/reference/integration/scheduling.html) · [Spring Boot: scheduling](https://docs.spring.io/spring-boot/reference/features/task-execution-and-scheduling.html)
 </details>
 
 **SP39. ⭐⭐ Cache với `@Cacheable`: dùng khi nào, cẩn thận gì?**
 <details><summary>Gợi ý</summary>
 
-Hợp với dữ liệu đọc nhiều, ít đổi: mã cửa hàng, danh mục, bảng mã code chung. Cần `@EnableCaching` và một provider (Caffeine trong máy, Redis dùng chung giữa các server). Bẫy: gọi trong cùng class (`SP12`), quên xoá cache khi dữ liệu đổi (`@CacheEvict`), cache trong máy thì mỗi server một bản khác nhau, không có TTL thì dữ liệu cũ nằm mãi. Không cache dữ liệu trạng thái đơn hàng.
+```java
+@Configuration
+@EnableCaching
+public class CacheConfig {}
+
+@Service
+public class StoreService {
+    @Cacheable(cacheNames = "store", key = "#code")        // lần đầu query DB, lần sau lấy trong cache
+    public Store findByCode(String code) { return storeMapper.findByCode(code); }
+
+    @CacheEvict(cacheNames = "store", key = "#store.code") // sửa dữ liệu thì xoá cache của key đó
+    public void update(Store store) { storeMapper.update(store); }
+}
+```
+```yaml
+spring:
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=1000,expireAfterWrite=10m    # giới hạn số lượng + tự hết hạn
+```
+Hợp với dữ liệu đọc nhiều, ít đổi (cửa hàng, danh mục, mã code chung). **Không** cache trạng thái đơn hàng. Cache trong bộ nhớ (Caffeine) thì mỗi server một bản: server A đã xoá, server B vẫn giữ dữ liệu cũ tới khi hết hạn. Cần đồng bộ thì dùng Redis.
+
+📖 [Cache annotations](https://docs.spring.io/spring-framework/reference/integration/cache/annotations.html) · [Spring Boot: caching](https://docs.spring.io/spring-boot/reference/io/caching.html)
 </details>
 
 **SP40. ⭐⭐⭐ API đang chạy bỗng chậm trên production. Bro điều tra theo thứ tự nào?**
 <details><summary>Gợi ý</summary>
 
-1. Phạm vi: mọi API hay chỉ một API, từ lúc nào, có trùng thời điểm deploy hay giờ cao điểm không.
-2. Log và metric: thời gian từng request, số connection đang dùng trong pool, CPU, heap, số lần GC.
-3. DB: câu SQL nào chậm (Oracle: AWR, `V$SQL`), có bị khoá chờ không, có mất index hay plan bị đổi không.
-4. Thread dump (`jstack`) chụp 2–3 lần: thread đang kẹt ở đâu (chờ connection, chờ API ngoài, chờ khoá).
-5. Sửa xong thì đo lại bằng số.
+1. **Phạm vi:** mọi API hay chỉ một API, từ lúc nào, có trùng thời điểm deploy hay giờ cao điểm không.
+2. **Log và metric:** thời gian của từng request (interceptor ở SP19), số connection đang dùng (`/actuator/metrics/hikaricp.connections.active`), CPU, heap, GC.
+3. **DB:** câu SQL nào chậm (Oracle: AWR, `V$SQL`), có bị khoá chờ không, plan có bị đổi không.
+4. **Thread dump**, chụp 2–3 lần cách nhau vài giây:
+   ```bash
+   jcmd <pid> Thread.print > dump1.txt     # hoặc: jstack <pid>
+   ```
+   Nhiều thread cùng đứng ở `HikariPool.getConnection` là pool cạn; đứng ở `SocketInputStream.read` là đang chờ DB hoặc API ngoài; ở trạng thái `BLOCKED` là đang chờ khoá.
+5. Sửa xong thì **đo lại bằng số**.
 
 Kể một lần thật ở dự án là tốt nhất (chuyện N+1 ở mục 3 của [du-an-cong-ty.md](du-an-cong-ty.md)).
 </details>
@@ -504,19 +1469,93 @@ Kể một lần thật ở dự án là tốt nhất (chuyện N+1 ở mục 3 
 **SP41. ⭐ Unit test khác integration test thế nào? Bro viết test cho service thế nào?**
 <details><summary>Gợi ý</summary>
 
-Unit: một class, các phụ thuộc là mock (JUnit 5 + Mockito: `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `when(...).thenReturn(...)`, `verify(...)`), chạy rất nhanh. Integration: chạy cùng Spring và DB thật. Với service xác nhận huỷ: mock mapper, kiểm tra trường hợp sai trạng thái thì ném lỗi, trường hợp update trả 0 dòng thì ném lỗi, và mapper được gọi đúng số lần.
+Unit test: một class, phụ thuộc là mock, không có Spring, chạy rất nhanh.
+```java
+@ExtendWith(MockitoExtension.class)
+class CancelServiceTest {
+    @Mock OrderMapper orderMapper;
+    @Mock StockMapper stockMapper;
+    @InjectMocks CancelService cancelService;     // tạo CancelService, truyền 2 mock vào
+
+    @Test
+    void confirm_restoresStock_whenStatusIsCancelRequested() {
+        when(orderMapper.confirmCancel(1L, "u1")).thenReturn(1);    // update được 1 dòng
+
+        cancelService.confirm(1L, "u1");
+
+        verify(stockMapper).restore(1L);           // đã trả tồn kho
+    }
+
+    @Test
+    void confirm_throws_andDoesNotRestoreStock_whenAlreadyConfirmed() {
+        when(orderMapper.confirmCancel(1L, "u1")).thenReturn(0);    // 0 dòng: người khác đã xử lý
+
+        assertThatThrownBy(() -> cancelService.confirm(1L, "u1"))
+                .isInstanceOf(BusinessException.class);
+        verify(stockMapper, never()).restore(anyLong());           // không trả tồn kho lần nữa
+    }
+}
+```
+Integration test: chạy cùng Spring và DB thật, kiểm cả SQL, transaction, cấu hình.
+
+📖 [Spring Boot: testing](https://docs.spring.io/spring-boot/reference/testing/spring-boot-applications.html)
 </details>
 
 **SP42. ⭐⭐ `@SpringBootTest`, `@WebMvcTest`, `@MybatisTest` khác nhau thế nào?**
 <details><summary>Gợi ý</summary>
 
-`@SpringBootTest`: dựng cả app, chậm nhưng thật nhất. `@WebMvcTest`: chỉ tầng web (controller, advice, filter), service thì mock bằng `@MockBean` (Boot 3.4 trở lên là `@MockitoBean`), test bằng `MockMvc`. `@MybatisTest` (thư viện `mybatis-spring-boot-starter-test`): chỉ dựng mapper và DataSource, để test câu SQL. Test SQL viết cho Oracle thì nên chạy trên Oracle thật (Testcontainers với image Oracle XE), không chạy trên H2.
+```java
+// Chỉ tầng web: controller, advice, filter. Service là mock.
+@WebMvcTest(CancelController.class)
+class CancelControllerTest {
+    @Autowired MockMvc mvc;
+    @MockBean CancelService cancelService;        // Boot 3.4 trở lên: @MockitoBean
+
+    @Test
+    void returns409_whenStatusInvalid() throws Exception {
+        doThrow(new BusinessException(ErrorCode.INVALID_ORDER_STATUS))
+                .when(cancelService).confirm(eq(1L), any());
+
+        mvc.perform(post("/api/orders/1/cancel-confirmation")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"khách đổi ý\"}"))
+           .andExpect(status().isConflict())
+           .andExpect(jsonPath("$.code").value("INVALID_ORDER_STATUS"));
+    }
+}
+
+// Chỉ mapper + DataSource, để kiểm câu SQL (thư viện mybatis-spring-boot-starter-test)
+@MybatisTest
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)   // dùng DB thật, không thay bằng DB nhúng
+class OrderMapperTest {
+    @Autowired OrderMapper orderMapper;
+
+    @Test
+    void confirmCancel_updatesOnlyWhenCancelRequested() { ... }
+}
+```
+`@SpringBootTest` dựng cả app: chậm nhất, nhưng gần với thật nhất. SQL viết riêng cho Oracle (`ROWNUM`, `MERGE`, `NVL`) thì nên test trên Oracle thật (Testcontainers với image Oracle XE), H2 không chạy giống hệt được.
+
+📖 [Spring Boot: test slices](https://docs.spring.io/spring-boot/reference/testing/spring-boot-applications.html) · [`@MybatisTest`](https://mybatis.org/spring-boot-starter/mybatis-spring-boot-test-autoconfigure/)
 </details>
 
 **SP43. ⭐⭐ Test có `@Transactional` thì có gì đặc biệt?**
 <details><summary>Gợi ý</summary>
 
-Spring tự **rollback** sau mỗi test, nên DB sạch lại. Bẫy: vì không commit, những thứ chỉ chạy khi commit (`@TransactionalEventListener(AFTER_COMMIT)`, trigger, constraint kiểu deferred) **không được test tới**; và code chạy ở thread khác (`@Async`) không thấy dữ liệu chưa commit.
+```java
+@SpringBootTest
+@Transactional                     // mỗi test chạy xong Spring tự ROLLBACK
+class CancelServiceIT {
+    @Test
+    void confirm() {
+        cancelService.confirm(1L, "u1");
+        // kiểm DB ở đây thấy dữ liệu mới (cùng transaction)
+    }   // rollback: DB sạch lại cho test sau
+}
+```
+Bẫy: vì không bao giờ commit, những thứ chỉ chạy khi commit (`@TransactionalEventListener(AFTER_COMMIT)` ở SP10) **không chạy trong test**; code chạy ở thread khác (`@Async`) không thấy dữ liệu chưa commit. Muốn test những thứ đó thì bỏ `@Transactional` ở test và tự dọn dữ liệu.
+
+📖 [Transaction trong test](https://docs.spring.io/spring-framework/reference/testing/testcontext-framework/tx.html)
 </details>
 
 ---
@@ -526,13 +1565,26 @@ Spring tự **rollback** sau mỗi test, nên DB sạch lại. Bẫy: vì không
 **SP44. ⭐⭐ Spring dùng những design pattern nào? Bro đã dùng pattern nào?**
 <details><summary>Gợi ý</summary>
 
-Singleton (bean), Factory (`BeanFactory`, `FactoryBean`), Proxy (`@Transactional`, AOP), Template Method (`JdbcTemplate`, `RestTemplate`, `SqlSessionTemplate`), Strategy (inject `List<PaymentHandler>`), Observer (`ApplicationEvent`), Front Controller (`DispatcherServlet`), Adapter (`HandlerAdapter`). Tự dùng: Strategy cho nhiều cách hoàn tiền theo phương thức thanh toán; Null Object (`NoAiProvider`, xem `B6`).
+| Pattern | Spring dùng ở đâu | Ví dụ trong file này |
+|---|---|---|
+| Singleton | Bean mặc định | SP5 |
+| Factory | `BeanFactory`, `FactoryBean` (`SqlSessionFactoryBean` của MyBatis) | |
+| Proxy | `@Transactional`, `@Async`, AOP | SP12, SP13 |
+| Template Method | `JdbcTemplate`, `RestTemplate`, `TransactionTemplate`, `SqlSessionTemplate` | SP12 |
+| Strategy | Inject `List<Interface>` rồi chọn theo key | `RefundHandler` ở SP4 |
+| Observer | `ApplicationEvent` | SP10 |
+| Front Controller | `DispatcherServlet` | SP19 |
+| Chain of Responsibility | Filter chain, Spring Security | SP32 |
+
+Khi được hỏi, chọn **một** pattern bro từng dùng thật và kể vì sao dùng nó, hơn là kể tên cả danh sách.
 </details>
 
 **SP45. ⭐⭐⭐ Spring MVC khác Spring WebFlux thế nào? Khi nào nên chuyển?**
 <details><summary>Gợi ý</summary>
 
-MVC: mỗi request giữ một thread (blocking), code dễ hiểu, hợp với JDBC/MyBatis. WebFlux: non-blocking, ít thread mà phục vụ được nhiều kết nối, nhưng cả chuỗi phải non-blocking (JDBC và MyBatis là blocking, nên dùng WebFlux với chúng thì mất hết lợi ích), và debug khó hơn. Với Java 21, virtual threads giúp MVC chịu được nhiều kết nối mà không phải viết lại code. Dự án dùng MyBatis + Oracle thì MVC là lựa chọn đúng.
+MVC: mỗi request giữ một thread cho tới khi xong (blocking), code đọc từ trên xuống dễ hiểu, hợp với JDBC/MyBatis. WebFlux: non-blocking, ít thread mà phục vụ được rất nhiều kết nối, nhưng cả chuỗi phải non-blocking. JDBC và MyBatis là blocking, nên dùng WebFlux với chúng thì mất hết lợi ích mà code lại khó đọc, khó debug hơn. Với Java 21, virtual threads giúp MVC chịu được nhiều kết nối mà không phải viết lại code. Dự án dùng MyBatis + Oracle thì MVC là lựa chọn đúng.
+
+📖 [Spring WebFlux overview](https://docs.spring.io/spring-framework/reference/web/webflux/new-framework.html)
 </details>
 
 ---
