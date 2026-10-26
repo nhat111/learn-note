@@ -518,25 +518,41 @@ public class SlipNoService {
                           │           └─ COMMIT ──────────┘
                           └─ Spring rollback ──> không còn gì để rollback
 ```
-Kết luận: **ranh giới transaction ở đây là SP, không phải Spring.** Đừng cố quản lý transaction từ Java cho phần SP.
+Kết luận: **ranh giới transaction ở đây là SP, không phải Spring.** Nhưng có một điểm hay: `COMMIT`/`ROLLBACK` của SP áp cho **cả connection**, nên khi có `@Transactional`, các câu `INSERT` Java chạy trước đó đi **cùng một khối** với SP:
+
+| | Có `@Transactional` | Không có `@Transactional` |
+|---|---|---|
+| Java `INSERT` trước khi gọi SP | Chưa commit. Session khác (SQL Developer) **chưa thấy** | Commit ngay sau từng câu (mybatis-spring tự commit khi không có transaction), session khác thấy ngay |
+| Connection | Java và SP dùng chung một connection | Mỗi lời gọi mapper có thể lấy một connection khác trong pool |
+| SP thành công (`COMMIT`) | Commit cả Java `INSERT` lẫn phần của SP | Phần SP được commit; Java `INSERT` đã commit từ trước |
+| SP trả `-1` (`ROLLBACK` trong SP) | **Huỷ cả Java `INSERT`**: dữ liệu sạch | Java `INSERT` **vẫn còn**: dòng mồ côi, không có SP đi kèm |
+| Lỗi hoặc timeout giữa chừng SP | Spring rollback được phần chưa commit | Java `INSERT` vẫn còn |
+| Khoá dòng do Java `INSERT`/`UPDATE` tạo ra | Giữ tới khi SP `COMMIT` | Nhả ngay |
+
+Kiểm nhanh: query từ SQL Developer **trong lúc** request đang chạy. Có `@Transactional` thì chưa thấy các dòng Java vừa `INSERT`; SP `COMMIT` xong mới thấy. Đó chính là hiện tượng đã gặp.
+
+Lưu ý: kết luận ở bảng trên dựa vào việc SP dùng `ROLLBACK` toàn phần. Nếu SP dùng `ROLLBACK TO SAVEPOINT ...` thì chỉ phần của SP bị huỷ, còn Java `INSERT` thì vẫn chờ Spring quyết định.
 
 **Cách xử lý hợp với dự án maintain:**
 
-1. **Bỏ `@Transactional` vừa thêm** (trả về như cũ) và ghi comment: `// Transaction do SP quản lý (SP tự COMMIT/ROLLBACK)`. Giữ nó thì vừa không rollback được, vừa giữ connection lâu hơn. Nếu trước SP có câu khoá dòng (ví dụ lấy `slip_no` từ bảng đánh số) thì khoá còn bị giữ tới tận `COMMIT` của SP. Nên kiểm xem sau khi thêm `@Transactional`, timeout có xảy ra nhiều hơn không.
+1. **Giữ `@Transactional`** nếu các bảng Java `INSERT` trước SP không được phép còn lại khi SP thất bại (thường là vậy). Chính nó làm cho Java `INSERT` và SP thành một khối. Ghi comment để người sau khỏi hiểu lầm: `// Java INSERT + SP chạy chung một connection; SP tự COMMIT/ROLLBACK cả khối`. Chỉ bỏ nếu các dòng đó **cố ý** được giữ lại kể cả khi SP lỗi (ví dụ bảng log yêu cầu). Hỏi lại BA hoặc người viết cũ nếu không chắc.
+   Cái giá: khoá do Java tạo ra (nhất là khi lấy `slip_no` từ bảng đánh số) bị giữ tới khi SP `COMMIT`. Nên lấy `slip_no` bằng `REQUIRES_NEW` ở bean riêng (xem phần `slip_no` ở trên), còn các `INSERT` nghiệp vụ thì để trong transaction chính.
 2. **Đổi `-1` thành phản hồi đúng nghĩa, và coi lần gọi lại là thành công:**
    ```java
-   // Không @Transactional: SP tự quản lý transaction
+   // Java INSERT + SP chung một connection; SP tự COMMIT/ROLLBACK cả khối
+   @Transactional
    public CancelResult confirm(long orderId, String userId) {
        Order order = orderMapper.findById(orderId);
        if (order.isCancelConfirmed()) {
            return CancelResult.alreadyConfirmed(order);      // lần gọi lại sau timeout: không sinh slip_no mới
        }
 
-       String slipNo = slipNoService.next(order.getStoreCode());
+       String slipNo = slipNoService.next(order.getStoreCode());   // REQUIRES_NEW: nhả khoá bảng đánh số ngay
+       insertBusinessRows(order, slipNo);                    // các INSERT nghiệp vụ như cũ, chưa commit
        ConfirmCancelParam p = new ConfirmCancelParam(orderId, userId, slipNo);
        orderMapper.callConfirmCancel(p);                     // OUT param resultCode được MyBatis gán vào p
 
-       if (p.getResultCode() == -1) {                        // SP đã tự ROLLBACK
+       if (p.getResultCode() == -1) {                        // SP đã tự ROLLBACK (cả các INSERT ở trên)
            Order now = orderMapper.findById(orderId);
            if (now.isCancelConfirmed()) {
                return CancelResult.alreadyConfirmed(now);    // người khác hoặc lần trước đã xác nhận xong
