@@ -465,6 +465,49 @@ WHERE username = 'APP_USER' AND status = 'ACTIVE';
 ```
 Quá 20 giây thì JDBC huỷ lời gọi (Oracle báo `ORA-01013`), và Spring rollback phần chưa commit. Phần procedure **đã tự commit** thì vẫn giữ nguyên, nên phải kiểm bảng ở trên trước khi bật timeout.
 
+### Mỗi lần gọi API, server sinh một `slip_no` mới rồi truyền vào procedure
+
+Chi tiết này đổi hai chuyện:
+
+**1. Gọi lại không còn an toàn.** Lần gọi lại sau timeout sinh ra một `slip_no` **mới**, nên procedure có thể coi đó là một phiếu mới và xử lý lần hai (hai phiếu huỷ, trả tồn kho hai lần, hoàn tiền hai lần). Trừ khi procedure tự kiểm trạng thái đơn trước khi làm. Cần kiểm:
+- Trong procedure có đoạn kiểm "đơn đã huỷ rồi thì dừng" không? Đoạn kiểm đó có khoá dòng đơn (`FOR UPDATE`) không? Không khoá thì hai request cùng lúc vẫn lọt qua.
+- Phía Java: kiểm trạng thái đơn **trước khi sinh `slip_no`**. Đã `CANCEL_CONFIRMED` thì trả kết quả cũ (kèm `slip_no` cũ), không sinh số mới, không gọi procedure.
+- Chặn ở mức DB *(nếu được phép thêm)*: mỗi đơn chỉ có một phiếu huỷ. Oracle không có partial index như Postgres, nhưng làm được bằng function-based index:
+  ```sql
+  CREATE UNIQUE INDEX ux_cancel_slip_per_order
+    ON slip_table (CASE WHEN slip_type = 'CANCEL' THEN order_id END);
+  ```
+
+**2. Cách sinh `slip_no` có thể chính là nguyên nhân "1/3 số lần bị".** Có ba cách hay gặp:
+
+| Cách sinh số | Khi nhiều người làm cùng lúc |
+|---|---|
+| `SEQUENCE` (`seq.NEXTVAL`) | Không khoá gì, không chờ. Số có thể bị nhảy (gap) |
+| `SELECT MAX(slip_no) + 1` | Hai người lấy trùng một số → `ORA-00001` hoặc trùng phiếu; còn phải quét bảng |
+| Bảng đánh số (số cuối theo cửa hàng/ngày), `UPDATE ... SET last_no = last_no + 1`, hay **`MERGE`** (chưa có dòng của ngày hôm nay thì `INSERT`, có rồi thì `UPDATE`) | **Khoá dòng đó tới khi commit.** Mọi giao dịch cùng cửa hàng, cùng ngày phải xếp hàng |
+
+Cách thứ ba rất phổ biến ở hệ thống bán lẻ Hàn (전표번호 theo cửa hàng, theo ngày). Nếu việc lấy số nằm **chung transaction** với phần xử lý dài, thì khoá bị giữ suốt transaction:
+```
+Người A: [lấy số: khoá dòng S001-20261026] ──── xử lý 20s ──── [commit, nhả khoá]
+Người B:        [lấy số → CHỜ A ...............................] → xử lý → quá 30s → app timeout
+```
+Lúc vắng thì không ai chờ ai (thành công), lúc đông thì chờ nhau (timeout). Đúng kiểu "khoảng 3 lần bị 1 lần".
+
+**Kiểm chứng:** chạy câu `v$session` đúng lúc đang treo. Nếu `blocking_session` có giá trị và `sql_id` của session bị chặn trỏ vào câu lấy số (`UPDATE`/`MERGE` vào bảng đánh số) thì đúng là nó.
+
+**Sửa (ít đổi logic nhất):** lấy số trong một **transaction riêng, commit ngay**, để khoá chỉ bị giữ vài mili giây:
+```java
+@Service
+public class SlipNoService {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)   // commit ngay khi method này xong
+    public String next(String storeCode, LocalDate day) {
+        return slipMapper.nextSlipNo(storeCode, day);        // câu UPDATE/MERGE lấy số như cũ
+    }
+}
+// CancelService (bean khác, xem SP12) gọi slipNoService.next(...) rồi mới gọi procedure.
+```
+Đánh đổi: transaction chính lỗi thì số đã lấy bị bỏ, dãy số có lỗ hổng. **Phải hỏi khách/BA xem có được phép nhảy số không** (phiếu kế toán đôi khi bắt buộc liên tục). Nếu việc lấy số nằm **bên trong** procedure thì phải sửa procedure (tách ra procedure riêng có `PRAGMA AUTONOMOUS_TRANSACTION`, hoặc chuyển ra Java như trên), đi qua DBA.
+
 **Câu hỏi phỏng vấn có thể đi từ chuyện này:**
 - Timeout ở client có làm server dừng không? (Không. Servlet không biết client đã ngắt cho tới khi ghi response.)
 - Vì sao không chỉ tăng timeout của app lên 60 giây? (Che triệu chứng; server chậm hơn 60 giây thì lại y như cũ; người dùng phải chờ lâu; vẫn có trường hợp app báo sai.)
